@@ -1,0 +1,77 @@
+.TH MBIDLED "1" "January 2022"
+.SH NAME
+mbidled \- run command on mailbox change
+.
+.SH SYNOPSIS
+.
+.B mbidled
+.B \-c
+.I MBSYNC_CONFIG
+[\fB-e\fR \fICOMMAND\fR]
+.RI [ OPTION ]...
+.
+.SH DESCRIPTION
+.B mbidled
+runs
+.I
+COMMAND
+on mailbox change.
+.
+.P
+On IMAP4 servers the IDLE command is used (RFC 2177).
+.
+.SH COMMANDS
+.P
+.TP
+.BI \-c\  MBSYNC_CONFIG
+Path to
+.BR mbsync (1)
+configuration file to use. Read Channel, IMAPStore and IMAPAccount sections from it.
+.
+.TP
+.BI \-e\  COMMAND
+Execute shell
+.I
+COMMAND
+on mailbox change.
+.
+.IP
+By default, synchronize changed mailbox:
+.BR "mbsync -c $MBIDLED_CONFIG $MBIDLED_CHANNEL:$MBIDLED_MAILBOX" .
+.
+.IP
+The following environment variables are set for the executed program:
+.TS
+tab(|)[];
+ll.
+Variable|Value
+$\fBMBIDLED_CONFIG\fR|Argument for \fB-c\fR.
+$\fBMBIDLED_CHANNEL\fR|Name of changed Channel.
+$\fBMBIDLED_MAILBOX\fR|Name of changed mailbox.
+.TE
+.
+.TP
+.B \-d
+When mailbox changes wait this number of milliseconds before running
+.IR COMMAND .
+(Default: 150)
+.IP
+Multiple notifications can arrive for the same change event, thus it can be
+useful to wait a bit.
+.
+.TP
+.B \-D
+Set minimum time in milliseconds to be elapsed between two
+.I COMMAND
+runs. (Default: 30000)
+.
+.TP
+.B \-v
+Be verbose. Note that output may contain sensitive information.
+.
+.TP
+.B \-h
+Display help and exit.
+.
+.SH "SEE ALSO"
+.B mbsync(1)

@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
@@ -142,6 +143,8 @@ channel_do_sync(struct channel *chan)
 	chan->want_sync = 0;
 	chan->pid = fork();
 	if (!chan->pid) {
+		if (!opt_verbose)
+			dup2(open("/dev/null", O_WRONLY | O_CLOEXEC), STDOUT_FILENO);
 		if (setenv("MBIDLED_CONFIG", chan->mb_config->filename, 1) ||
 		    setenv("MBIDLED_CHANNEL", chan->mb_chan->name, 1) ||
 		    setenv("MBIDLED_MAILBOX", chan->mailbox, 1) ||

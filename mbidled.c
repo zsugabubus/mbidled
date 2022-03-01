@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <unistd.h>
 
 #include "imap.h"
@@ -94,19 +95,23 @@ channel_init(struct channel *chan, struct pollfd *pollfd,
 }
 
 static void
-channel_printf(struct channel const *chan, char const *fmt, ...)
+channel_log(struct channel const *chan, int priority, char const *fmt, ...)
 {
-	if (!opt_verbose)
-		return;
+	switch (priority) {
+	case LOG_INFO:
+	case LOG_DEBUG:
+		if (!opt_verbose)
+			return;
+	}
 
 	fprintf(stderr, "%s: ", chan->mb_account->name);
 
 	va_list ap;
 	va_start(ap, fmt);
-	vprintf(fmt, ap);
+	vfprintf(stderr, fmt, ap);
 	va_end(ap);
 
-	fputc('\n', stdout);
+	fputc('\n', stderr);
 }
 
 static void
@@ -117,7 +122,7 @@ channel_write_cmdf(struct channel *chan, enum channel_cmd cmd, char const *fmt, 
 	int rc = imap_write_vcmdf(&chan->imap, fmt, ap);
 	va_end(ap);
 	if (rc < 0) {
-		channel_printf(chan, "Cannot compose command: %s", strerror(rc));
+		channel_log(chan, LOG_ERR, "Cannot compose command: %s", strerror(rc));
 		chan->state = CHANNEL_STATE_ERROR;
 	} else {
 		chan->cmd = cmd;
@@ -125,14 +130,14 @@ channel_write_cmdf(struct channel *chan, enum channel_cmd cmd, char const *fmt, 
 
 		char const *buf = chan->imap.wrbuf + chan->imap.wrhead;
 		size_t len = chan->imap.wrtail - chan->imap.wrhead;
-		channel_printf(chan, "C: %.*s", (int)len - 2, buf);
+		channel_log(chan, LOG_DEBUG, "C: %.*s", (int)len - 2, buf);
 	}
 }
 
 static void
 channel_do_sync(struct channel *chan)
 {
-	channel_printf(chan, "Running command...");
+	channel_log(chan, LOG_DEBUG, "Running command...");
 
 	chan->want_sync = 0;
 	chan->pid = fork();
@@ -141,17 +146,17 @@ channel_do_sync(struct channel *chan)
 		    setenv("MBIDLED_CHANNEL", chan->mb_chan->name, 1) ||
 		    setenv("MBIDLED_MAILBOX", chan->mailbox, 1) ||
 		    execl("/bin/sh", "sh", opt_verbose ? "-xc" : "-c", opt_cmd, NULL))
-			channel_printf(chan, "exec() failed: %s", strerror(errno));
+			channel_log(chan, LOG_ERR, "exec() failed: %s", strerror(errno));
 		_exit(EXIT_FAILURE);
 	} else if (chan->pid < 0) {
-		channel_printf(chan, "fork() failed: %s", strerror(errno));
+		channel_log(chan, LOG_ERR, "fork() failed: %s", strerror(errno));
 	}
 }
 
 static void
 channel_feed(struct channel *chan, char *line)
 {
-	channel_printf(chan, "S: %s", line);
+	channel_log(chan, LOG_DEBUG, "S: %s", line);
 
 	if ('*' == *line || '+' == *line) {
 		if (CHANNEL_CMD_IDLE != chan->cmd)
@@ -172,12 +177,13 @@ channel_feed(struct channel *chan, char *line)
 	assert(*line == 'A');
 	int line_tag = atoi(line + 1);
 	if (line_tag != chan->cmd_tag) {
-		channel_printf(chan, "Received response with unknown tag %d", line_tag);
+		channel_log(chan, LOG_ERR, "Received response with unknown tag %d", line_tag);
 		return;
 	}
 
 	switch (chan->cmd) {
 	case CHANNEL_CMD_LOGIN:
+		channel_log(chan, LOG_NOTICE, "Logged in.");
 #if 0
 		channel_write_cmdf(chan, CHANNEL_CMD_LIST,
 				"LIST \"%q\" \"%q\"", "", "*");
@@ -275,7 +281,7 @@ channel_create_transport(struct channel *chan)
 			if (dup2(pair[0], STDIN_FILENO) < 0 ||
 			    dup2(pair[0], STDOUT_FILENO) < 0 ||
 			    execl("/bin/sh", "sh", "-c", mb_account->tunnel_cmd, NULL) < 0)
-				channel_printf(chan, "exec() failed: %s", strerror(errno));
+				channel_log(chan, LOG_ERR, "exec() failed: %s", strerror(errno));
 			_exit(EXIT_FAILURE);
 		}
 
@@ -334,7 +340,7 @@ channel_poll(struct channel *chan)
 		imap_open(&chan->imap, bio);
 	}
 
-		channel_printf(chan, "Connecting...");
+		channel_log(chan, LOG_DEBUG, "Connecting...");
 		chan->state = CHANNEL_STATE_CONNECTING;
 		break;
 
@@ -361,10 +367,10 @@ channel_poll(struct channel *chan)
 		break;
 
 	case CHANNEL_STATE_CONNECTED:
-		channel_printf(chan, "Connected.");
+		channel_log(chan, LOG_INFO, "Connected.");
 
 		if (MBCONFIG_SSL_IMAPS == chan->mb_account->ssl) {
-			channel_printf(chan, "Performing SSL handshake...");
+			channel_log(chan, LOG_DEBUG, "Performing SSL handshake...");
 			chan->state = CHANNEL_STATE_CONNECTING_SSL;
 		} else {
 			chan->state = CHANNEL_STATE_ESTABLISHED;
@@ -390,7 +396,7 @@ channel_poll(struct channel *chan)
 		int err;
 		BIO_get_ssl(chan->imap.bio, &ssl);
 		if (!(untrusted_cert = SSL_get_peer_certificate(ssl))) {
-			channel_printf(chan, "No certificate.");
+			channel_log(chan, LOG_ERR, "No certificate.");
 			chan->state = CHANNEL_STATE_ERROR;
 			break;
 		} else if (X509_V_OK != (err = SSL_get_verify_result(ssl))) {
@@ -404,7 +410,7 @@ channel_poll(struct channel *chan)
 					goto cert_trusted;
 			}
 
-			channel_printf(chan, "Certificate verification failed: %s.",
+			channel_log(chan, LOG_ERR, "Certificate verification failed: %s.",
 					X509_verify_cert_error_string(err));
 			if (opt_verbose)
 				X509_print_fp(stdout, untrusted_cert);
@@ -415,12 +421,12 @@ channel_poll(struct channel *chan)
 		}
 	}
 
-		channel_printf(chan, "SSL connection established.");
+		channel_log(chan, LOG_INFO, "SSL connection established.");
 		chan->state = CHANNEL_STATE_ESTABLISHED;
 		break;
 
 	case CHANNEL_STATE_ESTABLISHED:
-		channel_printf(chan, "Connection established.");
+		channel_log(chan, LOG_INFO, "Connection established.");
 		chan->state = CHANNEL_STATE_GOING_IMAP;
 		break;
 
@@ -430,9 +436,9 @@ channel_poll(struct channel *chan)
 	{
 		struct mbconfig_imap_account *mb_account = chan->mb_account;
 
-		channel_printf(chan, "Logging in...");
+		channel_log(chan, LOG_DEBUG, "Logging in...");
 		if (!mb_account->login_auth) {
-			channel_printf(chan, "LOGIN authentication disabled by config.");
+			channel_log(chan, LOG_ERR, "LOGIN authentication disabled by config.");
 			chan->state = CHANNEL_STATE_ERROR;
 			break;
 		}
@@ -441,7 +447,7 @@ channel_poll(struct channel *chan)
 		eval_cmd_option(&mb_account->pass, mb_account->pass_cmd);
 
 		if (!mb_account->user || !mb_account->pass) {
-			channel_printf(chan, "Missing User and/or Pass.");
+			channel_log(chan, LOG_ERR, "Missing User and/or Pass.");
 			chan->state = CHANNEL_STATE_ERROR;
 			break;
 		}
@@ -488,7 +494,7 @@ channel_poll(struct channel *chan)
 		break;
 
 	case CHANNEL_STATE_DISCONNECTED:
-		channel_printf(chan, "Disconnected.");
+		channel_log(chan, LOG_ERR, "Disconnected.");
 		chan->pid = 0;
 		chan->pollfd->fd = -1;
 		chan->timeout = 3 * 1000;
@@ -497,7 +503,7 @@ channel_poll(struct channel *chan)
 
 	case CHANNEL_STATE_ERROR:
 		ERR_print_errors_fp(stderr);
-		channel_printf(chan, "Error.");
+		channel_log(chan, LOG_ERR, "Error.");
 		chan->pid = 0;
 		chan->pollfd->fd = -1;
 		chan->timeout = 5 * 60 * 1000;
@@ -521,12 +527,16 @@ static void
 handle_sigchld(int sig)
 {
 	(void)sig;
-	for (pid_t pid; 0 < (pid = waitpid(-1, NULL, 0));) {
+	int status;
+	for (pid_t pid; 0 < (pid = waitpid(-1, &status, 0));) {
 		struct channel *chan = find_channel_by_pid(pid);
 		if (!chan)
 			continue;
 
-		channel_printf(chan, "Command terminated.");
+		int ok = WIFEXITED(status) && EXIT_SUCCESS == WEXITSTATUS(status);
+		int level = ok ? LOG_INFO : LOG_ERR;
+		channel_log(chan, level, "Command terminated with %s.",
+				ok ? "success" : "failure");
 
 		chan->pid = 0;
 		if (chan->want_sync)

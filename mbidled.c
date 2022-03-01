@@ -99,11 +99,7 @@ channel_printf(struct channel const *chan, char const *fmt, ...)
 	if (!opt_verbose)
 		return;
 
-	char buf[50];
-	time_t now = time(NULL);
-	struct tm *tm = localtime(&now);
-	strftime(buf, sizeof buf, "%T", tm);
-	printf("[%s] %s: ", buf, chan->mb_account->name);
+	fprintf(stderr, "%s: ", chan->mb_account->name);
 
 	va_list ap;
 	va_start(ap, fmt);

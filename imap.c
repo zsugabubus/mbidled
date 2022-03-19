@@ -17,7 +17,7 @@ imap_open(struct imap *imap, BIO *bio)
 {
 	imap->bio = bio;
 
-	imap->tag = 0;
+	imap->seq_num = 0;
 	imap->wrhead = 0;
 	imap->wrtail = 0;
 	imap_write_cancel(imap);
@@ -125,7 +125,7 @@ imap_write_tag(struct imap *imap)
 {
 	size_t rem = sizeof imap->wrbuf - imap->wrptr;
 	size_t len = snprintf(imap->wrbuf + imap->wrptr, rem,
-			"A%03" PRIu32, imap->tag);
+			"A%03" PRIu32, imap->seq_num);
 	if (len < rem)
 		imap->wrptr += len;
 	else
@@ -174,7 +174,7 @@ imap_write_str(struct imap *imap, char const *s)
 void
 imap_write_cmd_begin(struct imap *imap)
 {
-	++imap->tag;
+	++imap->seq_num;
 	imap_write_tag(imap);
 	imap_write_rawnstr(imap, " ", 1);
 }

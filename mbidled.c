@@ -133,7 +133,7 @@ channel_write_cmdf(struct channel *chan, enum channel_cmd cmd, char const *fmt, 
 		chan->state = CHANNEL_STATE_ERROR;
 	} else {
 		chan->cmd = cmd;
-		chan->cmd_tag = chan->imap.tag;
+		chan->cmd_tag = chan->imap.seq_num;
 
 		char const *buf = chan->imap.wrbuf + chan->imap.wrhead;
 		size_t len = chan->imap.wrtail - chan->imap.wrhead;

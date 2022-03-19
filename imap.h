@@ -7,7 +7,7 @@ struct mbconfig_imap_account;
 
 struct imap {
 	BIO *bio;
-	uint32_t tag; /**< Sequence number only. */
+	uint32_t seq_num;
 
 	/* wr */
 	unsigned short wrhead;

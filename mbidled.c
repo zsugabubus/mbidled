@@ -38,18 +38,23 @@ enum channel_state {
 	CHANNEL_STATE_CONNECTING_SSL,
 	CHANNEL_STATE_ESTABLISHED_SSL,
 	CHANNEL_STATE_ESTABLISHED,
-	CHANNEL_STATE_GOING_IMAP,
-	CHANNEL_STATE_DOING_IMAP,
+	CHANNEL_STATE_IMAP,
 	CHANNEL_STATE_DISCONNECTED,
 };
 
 enum channel_cmd {
 	CHANNEL_CMD_NONE,
+	CHANNEL_CMD_CAPABILITY,
 	CHANNEL_CMD_LOGIN,
 	CHANNEL_CMD_LIST,
 	CHANNEL_CMD_EXAMINE,
 	CHANNEL_CMD_IDLE,
 	CHANNEL_CMD_LOGOUT,
+};
+
+enum channel_cap {
+	CHANNEL_CAP_IDLE = 1 << 0,
+	CHANNEL_CAP_LOGINDISABLED = 1 << 1,
 };
 
 struct channel {
@@ -68,6 +73,7 @@ struct channel {
 
 	enum channel_cmd cmd;
 	int cmd_tag;
+	enum channel_cap cap;
 };
 
 static size_t nchannels;
@@ -157,15 +163,59 @@ channel_do_sync(struct channel *chan)
 }
 
 static void
+eval_cmd_option(char **option, char const *option_cmd)
+{
+	if (*option)
+		return;
+
+	char buf[8192];
+
+	option_cmd += '+' == *option_cmd;
+	FILE *stream = popen(option_cmd, "r");
+	if (!stream)
+		return;
+	char *ok = fgets(buf, sizeof buf, stream);
+	pclose(stream);
+	if (!ok)
+		return;
+	char *s = strchr(buf, '\n');
+	if (s)
+		*s = '\0';
+	*option = strdup(buf);
+}
+
+static void
 channel_feed(struct channel *chan, char *line)
 {
 	channel_log(chan, LOG_DEBUG, "S: %s", line);
 
-	if ('*' == *line || '+' == *line) {
-		if (CHANNEL_CMD_IDLE != chan->cmd)
+	if ('*' == *line || '+' == *line) switch (chan->cmd) {
+	case CHANNEL_CMD_NONE:
+		if (strncmp(line, "* OK ", 5)) {
+			channel_log(chan, LOG_ERR, "OK expected.");
+			chan->state = CHANNEL_STATE_ERROR;
 			return;
+		}
 
+		channel_write_cmdf(chan, CHANNEL_CMD_CAPABILITY,
+				"CAPABILITY");
+		return;
+
+	case CHANNEL_CMD_CAPABILITY:
+		if (strncmp(line, "* CAPABILITY ", 13))
+			/* Ignore. */
+			return;
+		line += 13;
+
+		if (strstr(line, " IDLE"))
+			chan->cap |= CHANNEL_CAP_IDLE;
+		if (strstr(line, " LOGINDISABLED"))
+			chan->cap |= CHANNEL_CAP_LOGINDISABLED;
+		return;
+
+	case CHANNEL_CMD_IDLE:
 		if (!('0' <= line[2] && line[2] <= '9'))
+			/* Ignore. */
 			return;
 
 		chan->want_sync = 1;
@@ -175,16 +225,63 @@ channel_feed(struct channel *chan, char *line)
 			chan->timeout = opt_reaction_time;
 
 		return;
+
+	default:
+		/* Ignore. */
+		return;
 	}
 
 	assert(*line == 'A');
-	int line_tag = atoi(line + 1);
+	int line_tag = strtol(line + 1, &line, 10);
 	if (line_tag != chan->cmd_tag) {
 		channel_log(chan, LOG_ERR, "Received response with unknown tag %d", line_tag);
 		return;
 	}
 
+	if (strncmp(line, " OK ", 4)) {
+		channel_log(chan, LOG_ERR, "OK expected.");
+		chan->state = CHANNEL_STATE_ERROR;
+		return;
+	}
+
 	switch (chan->cmd) {
+	case CHANNEL_CMD_CAPABILITY:
+		if (!(CHANNEL_CAP_IDLE & chan->cap)) {
+			channel_log(chan, LOG_ERR, "IDLE not supported.");
+			chan->state = CHANNEL_STATE_ERROR;
+			return;
+		}
+
+		if (CHANNEL_CAP_LOGINDISABLED & chan->cap) {
+			channel_log(chan, LOG_ERR, "LOGIN disabled by the server.");
+			chan->state = CHANNEL_STATE_ERROR;
+			return;
+		}
+
+		struct mbconfig_imap_account *mb_account = chan->mb_account;
+
+		channel_log(chan, LOG_DEBUG, "Logging in...");
+		if (!mb_account->login_auth) {
+			channel_log(chan, LOG_ERR, "LOGIN disabled by the user.");
+			chan->state = CHANNEL_STATE_ERROR;
+			return;
+		}
+
+		eval_cmd_option(&mb_account->user, mb_account->user_cmd);
+		eval_cmd_option(&mb_account->pass, mb_account->pass_cmd);
+
+		if (!mb_account->user || !mb_account->pass) {
+			channel_log(chan, LOG_ERR, "Missing User and/or Pass.");
+			chan->state = CHANNEL_STATE_ERROR;
+			return;
+		}
+
+		channel_write_cmdf(chan, CHANNEL_CMD_LOGIN,
+				"LOGIN \"%q\" \"%q\"",
+				mb_account->user,
+				mb_account->pass);
+		break;
+
 	case CHANNEL_CMD_LOGIN:
 		channel_log(chan, LOG_NOTICE, "Logged in.");
 #if 0
@@ -205,30 +302,9 @@ channel_feed(struct channel *chan, char *line)
 		break;
 
 	default:
-		abort();
+		/* Ignore unneeded completion responses. */
+		break;
 	}
-}
-
-static void
-eval_cmd_option(char **option, char const *option_cmd)
-{
-	if (*option)
-		return;
-
-	char buf[8192];
-
-	option_cmd += '+' == *option_cmd;
-	FILE *stream = popen(option_cmd, "r");
-	if (!stream)
-		return;
-	char *ok = fgets(buf, sizeof buf, stream);
-	pclose(stream);
-	if (!ok)
-		return;
-	char *s = strchr(buf, '\n');
-	if (s)
-		*s = '\0';
-	*option = strdup(buf);
 }
 
 static BIO *
@@ -333,6 +409,7 @@ channel_poll(struct channel *chan)
 		chan->want_sync = 1;
 		chan->timeout = -1;
 		chan->pollfd->fd = -1;
+		chan->cap = 0;
 
 		BIO *bio = channel_create_transport(chan);
 		if (!bio) {
@@ -430,39 +507,10 @@ channel_poll(struct channel *chan)
 
 	case CHANNEL_STATE_ESTABLISHED:
 		channel_log(chan, LOG_INFO, "Connection established.");
-		chan->state = CHANNEL_STATE_GOING_IMAP;
+		chan->state = CHANNEL_STATE_IMAP;
 		break;
 
-	case CHANNEL_STATE_GOING_IMAP:
-		chan->state = CHANNEL_STATE_DOING_IMAP;
-
-	{
-		struct mbconfig_imap_account *mb_account = chan->mb_account;
-
-		channel_log(chan, LOG_DEBUG, "Logging in...");
-		if (!mb_account->login_auth) {
-			channel_log(chan, LOG_ERR, "LOGIN authentication disabled by config.");
-			chan->state = CHANNEL_STATE_ERROR;
-			break;
-		}
-
-		eval_cmd_option(&mb_account->user, mb_account->user_cmd);
-		eval_cmd_option(&mb_account->pass, mb_account->pass_cmd);
-
-		if (!mb_account->user || !mb_account->pass) {
-			channel_log(chan, LOG_ERR, "Missing User and/or Pass.");
-			chan->state = CHANNEL_STATE_ERROR;
-			break;
-		}
-
-		channel_write_cmdf(chan, CHANNEL_CMD_LOGIN,
-				"LOGIN \"%q\" \"%q\"",
-				mb_account->user,
-				mb_account->pass);
-	}
-		break;
-
-	case CHANNEL_STATE_DOING_IMAP:
+	case CHANNEL_STATE_IMAP:
 		if (chan->want_sync &&
 		    chan->timeout < 0 &&
 		    chan->pid <= 0)

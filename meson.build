@@ -1,5 +1,4 @@
 project('mbidled', 'c',
-	version: '0.0a',
 	license: 'UNLICENSE',
 	default_options: [
 		'c_std=c99',
@@ -9,16 +8,23 @@ project('mbidled', 'c',
 
 add_project_arguments([
 	'-D_GNU_SOURCE',
-	'-DMBIDLED_VERSION="@0@ @1@"'.format(
-		meson.project_name(),
-		meson.project_version(),
-	),
 ], language: 'c')
 
 executable('mbidled',
 	'mbidled.c',
 	'imap.c',
 	'mbconfig.c',
+	vcs_tag(
+		command: [
+			'git',
+			'log',
+			'-1',
+			'--date=short',
+			'--format=%t %cd',
+		],
+		input: 'version.h.in',
+		output: 'version.h',
+	),
 	dependencies: [
 		dependency('openssl')
 	],

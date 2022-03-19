@@ -1,0 +1,1 @@
+#define VERSION "mbidled @VCS_TAG@"

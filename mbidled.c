@@ -16,6 +16,7 @@
 #include "imap.h"
 #include "mbconfig.h"
 #include "ts.h"
+#include "version.h"
 
 static char const USAGE[] =
 	"Usage: %s -c MBSYNC_CONFIG [-e COMMAND] [-v]\n"
@@ -638,7 +639,7 @@ main(int argc, char *argv[])
 
 		case 'v':
 			opt_verbose = 1;
-			fprintf(stderr, MBIDLED_VERSION "\n");
+			fprintf(stderr, VERSION "\n");
 			break;
 
 		case 'h':

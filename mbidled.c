@@ -410,6 +410,7 @@ channel_poll(struct channel *chan)
 		chan->want_sync = 1;
 		chan->timeout = -1;
 		chan->pollfd->fd = -1;
+		chan->cmd = CHANNEL_CMD_NONE;
 		chan->cap = 0;
 
 		BIO *bio = channel_create_transport(chan);

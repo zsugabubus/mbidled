@@ -1,8 +1,8 @@
 project('mbidled', 'c',
 	license: 'UNLICENSE',
 	default_options: [
-		'c_std=c99',
-		'warning_level=2',
+		'c_std=c11',
+		'warning_level=3',
 	],
 )
 
@@ -10,9 +10,18 @@ add_project_arguments([
 	'-D_GNU_SOURCE',
 ], language: 'c')
 
+cc = meson.get_compiler('c')
+
+libev_dep = dependency('libev', required: false)
+if not libev_dep.found()
+	libev_dep = cc.find_library('libev')
+endif
+
 executable('mbidled',
 	'mbidled.c',
+	'channel.c',
 	'imap.c',
+	'maildir.c',
 	'mbconfig.c',
 	vcs_tag(
 		command: [
@@ -26,7 +35,8 @@ executable('mbidled',
 		output: 'version.h',
 	),
 	dependencies: [
-		dependency('openssl')
+		dependency('openssl'),
+		libev_dep,
 	],
 	install: true,
 )

@@ -178,6 +178,7 @@ parse_int(struct mbconfig_parser *ctx, int *data)
 		return rc;
 	else if (!rc)
 		goto invalid;
+
 	char *end;
 	errno = 0;
 	*data = strtol(ctx->buf, &end, 10);
@@ -208,9 +209,9 @@ parse_path(struct mbconfig_parser *ctx, char **data)
 			slash = s + strlen(s);
 
 		struct passwd *pw;
-		if (s == slash)
+		if (s == slash) {
 			pw = getpwuid(geteuid());
-		else {
+		} else {
 			char old = *slash;
 			*slash = '\0';
 			pw = getpwnam(s);
@@ -237,18 +238,11 @@ parse_bool(struct mbconfig_parser *ctx, int *data)
 	if (rc <= 0)
 		return rc;
 
-	if (ISARG("YES") ||
-	    ISARG("TRUE") ||
-	    ISARG("ON") ||
-	    ISARG("1"))
+	if (ISARG("YES") || ISARG("TRUE") || ISARG("ON") || ISARG("1")) {
 		*data = 1;
-	else if (
-	    ISARG("NO") ||
-	    ISARG("FALSE") ||
-	    ISARG("OFF") ||
-	    ISARG("0"))
+	} else if (ISARG("NO") || ISARG("FALSE") || ISARG("OFF") || ISARG("0")) {
 		*data = 0;
-	else {
+	} else {
 		ctx->error_msg = "Invalid boolean value";
 		return -1;
 	}
@@ -347,25 +341,25 @@ preprocess_cmd(struct mbconfig_parser *ctx, int global)
 	if (ISARG(MBIDLED_CMD_PREFIX "STRICTPROPAGATE")) {
 		if (1 != (rc = get_kw(ctx)))
 			return rc;
-		if (ISARG("NONE"))
+		if (ISARG("NONE")) {
 			c->strict_propagate = 0;
-		else if (ISARG("FAR"))
+		} else if (ISARG("FAR")) {
 			c->strict_propagate = MBCONFIG_PROPAGATE_FAR;
-		else if (ISARG("NEAR"))
+		} else if (ISARG("NEAR")) {
 			c->strict_propagate = MBCONFIG_PROPAGATE_NEAR;
-		else if (ISARG("BOTH"))
+		} else if (ISARG("BOTH")) {
 			c->strict_propagate =
 				MBCONFIG_PROPAGATE_NEAR |
 				MBCONFIG_PROPAGATE_FAR;
-		else {
+		} else {
 			ctx->error_msg = "Unknown argument";
 			return -1;
 		}
-	} else if (ISARG(MBIDLED_CMD_PREFIX "STARTTIMEOUT"))
+	} else if (ISARG(MBIDLED_CMD_PREFIX "STARTTIMEOUT")) {
 		rc = parse_int(ctx, &c->start_timeout);
-	else if (ISARG(MBIDLED_CMD_PREFIX "STARTINTERVAL"))
+	} else if (ISARG(MBIDLED_CMD_PREFIX "STARTINTERVAL")) {
 		rc = parse_int(ctx, &c->start_interval);
-	else if (ISPREFIXARG(MBIDLED_CMD_PREFIX)) {
+	} else if (ISPREFIXARG(MBIDLED_CMD_PREFIX)) {
 		/* Drop command prefix. */
 		int const l = sizeof MBIDLED_CMD_PREFIX - 1;
 		ctx->argsz -= l;
@@ -395,22 +389,22 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 	data->login_auth = 1;
 	data->ssl_versions = SSL_OP_NO_SSLv3;
 
-	SECTION_FOREACH
-		if (ISARG("HOST"))
+	SECTION_FOREACH {
+		if (ISARG("HOST")) {
 			rc = parse_str(ctx, &data->host);
-		else if (ISARG("PORT"))
+		} else if (ISARG("PORT")) {
 			rc = parse_str(ctx, &data->port);
-		else if (ISARG("USER"))
+		} else if (ISARG("USER")) {
 			rc = parse_str(ctx, &data->user);
-		else if (ISARG("USERCMD"))
+		} else if (ISARG("USERCMD")) {
 			rc = parse_str(ctx, &data->user_cmd);
-		else if (ISARG("PASS"))
+		} else if (ISARG("PASS")) {
 			rc = parse_str(ctx, &data->pass);
-		else if (ISARG("PASSCMD"))
+		} else if (ISARG("PASSCMD")) {
 			rc = parse_str(ctx, &data->pass_cmd);
-		else if (ISARG("TUNNEL"))
+		} else if (ISARG("TUNNEL")) {
 			rc = parse_str(ctx, &data->tunnel_cmd);
-		else if (ISARG("AUTHMECHS")) {
+		} else if (ISARG("AUTHMECHS")) {
 			data->login_auth = 0;
 			while (0 < (rc = get_kw(ctx)))
 				data->login_auth |= ISARG("*") || ISARG("LOGIN");
@@ -419,13 +413,14 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 		} else if (ISARG("SSLTYPE")) {
 			if (!(rc = get_kw(ctx))) {
 				continue;
-			} else if (rc < 0)
+			} else if (rc < 0) {
 				break;
-			if (ISARG("NONE"))
+			}
+			if (ISARG("NONE")) {
 				data->ssl = MBCONFIG_SSL_NONE;
-			else if (ISARG("IMAPS"))
+			} else if (ISARG("IMAPS")) {
 				data->ssl = MBCONFIG_SSL_IMAPS;
-			else {
+			} else {
 				ctx->error_msg = "Unknown argument";
 				return -1;
 			}
@@ -441,25 +436,25 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 #define xmacro(name, op) | op
 			data->ssl_versions = 0 ARGS;
 #undef xmacro
-
-#define xmacro(name, op) \
-	else if (ISARG(name)) \
-		data->ssl_versions &= ~(op);
-			while (0 < (rc = get_kw(ctx)))
+			while (0 < (rc = get_kw(ctx))) {
 				if (0) (void)0;
+#define xmacro(name, op) else if (ISARG(name)) data->ssl_versions &= ~(op);
 				ARGS
 #undef xmacro
+			}
 #undef ARGS
 			if (0 <= rc)
 				rc = 1;
-		} else if (ISARG("SYSTEMCERTIFICATES"))
+		} else if (ISARG("SYSTEMCERTIFICATES")) {
 			rc = parse_bool(ctx, &data->system_certs);
-		else if (ISARG("CERTIFICATEFILE"))
+		} else if (ISARG("CERTIFICATEFILE")) {
 			rc = parse_path(ctx, &data->cert_file);
-		else if (ISARG("CIPHERSTRING"))
+		} else if (ISARG("CIPHERSTRING")) {
 			rc = parse_str(ctx, &data->ciphers);
-		else
+		} else {
 			skip_unknown_cmd(ctx);
+		}
+	}
 
 	if (rc < 0)
 		return rc;
@@ -487,7 +482,7 @@ parse_imap_store_section(struct mbconfig_parser *ctx)
 {
 	ALLOC_DATA(imap_stores, mbconfig_imap_store);
 
-	SECTION_FOREACH
+	SECTION_FOREACH {
 		if (ISARG("ACCOUNT")) {
 			if ((rc = want_str(ctx)) <= 0)
 				break;
@@ -500,8 +495,10 @@ parse_imap_store_section(struct mbconfig_parser *ctx)
 				return -1;
 			}
 			data->account = account;
-		} else
+		} else {
 			skip_unknown_cmd(ctx);
+		}
+	}
 
 	if (0 <= rc && !data->account) {
 		ctx->error_msg = "Missing required Account";
@@ -516,13 +513,14 @@ parse_maildir_store_section(struct mbconfig_parser *ctx)
 {
 	ALLOC_DATA(maildir_stores, mbconfig_maildir_store);
 
-	SECTION_FOREACH
+	SECTION_FOREACH {
 		if (ISARG("PATH"))
 			rc = parse_path(ctx, &data->path);
 		else if (ISARG("INBOX"))
 			rc = parse_path(ctx, &data->inbox);
 		else
 			skip_unknown_cmd(ctx);
+	}
 
 	if (0 <= rc && !data->path) {
 		ctx->error_msg = "Missing required Path";
@@ -539,16 +537,16 @@ parse_channel_section(struct mbconfig_parser *ctx)
 
 	data->sync = MBCONFIG_SYNC_PUSH | MBCONFIG_SYNC_PULL;
 
-	SECTION_FOREACH
-		if (ISARG("FAR"))
+	SECTION_FOREACH {
+		if (ISARG("FAR")) {
 			rc = parse_store(ctx, &data->far);
-		else if (ISARG("NEAR"))
+		} else if (ISARG("NEAR")) {
 			rc = parse_store(ctx, &data->near);
-		else if (ISARG("PATTERN") || ISARG("PATTERNS"))
+		} else if (ISARG("PATTERN") || ISARG("PATTERNS")) {
 			rc = parse_str_list(ctx, &data->patterns);
-		else if (ISARG("SYNC")) {
+		} else if (ISARG("SYNC")) {
 			data->sync = 0;
-			while (0 < (rc = get_kw(ctx)))
+			while (0 < (rc = get_kw(ctx))) {
 				if (ISARG("NONE"))
 					/* Nop. */;
 				else if (ISPREFIXARG("PULL"))
@@ -560,10 +558,13 @@ parse_channel_section(struct mbconfig_parser *ctx)
 					data->sync |=
 						MBCONFIG_SYNC_PULL |
 						MBCONFIG_SYNC_PUSH;
+			}
 			if (0 <= rc)
 				rc = 1;
-		} else
+		} else {
 			skip_unknown_cmd(ctx);
+		}
+	}
 
 	if (rc < 0)
 		return rc;

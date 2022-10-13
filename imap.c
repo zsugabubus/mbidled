@@ -552,10 +552,11 @@ do_poll(struct imap_store *store)
 		if (2 <= rc) {
 			line[rc - 2] = '\0';
 			feed(store, line);
-		} else if (BIO_should_retry(store->bio))
+		} else if (BIO_should_retry(store->bio)) {
 			return;
-		else
+		} else {
 			store->state = STATE_DISCONNECTED;
+		}
 	}
 		break;
 

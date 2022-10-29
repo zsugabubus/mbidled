@@ -424,6 +424,36 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 				ctx->error_msg = "Unknown argument";
 				return -1;
 			}
+		} else if (ISARG("TLSVERSIONS")) {
+			while (0 < (rc = get_kw(ctx))) {
+				int op = *ctx->buf;
+				memmove(ctx->buf, ctx->buf + 1, ctx->argsz-- + 1 /* NUL */);
+
+				int version;
+				if (ISARG("1.0")) {
+					version = SSL_OP_NO_TLSv1;
+				} else if (ISARG("1.1")) {
+					version = SSL_OP_NO_TLSv1_1;
+				} else if (ISARG("1.2")) {
+					version = SSL_OP_NO_TLSv1_2;
+				} else if (ISARG("1.3")) {
+					version = SSL_OP_NO_TLSv1_3;
+				} else {
+					ctx->error_msg = "Unrecognized TLS version";
+					return -1;
+				}
+
+				if ('-' == op) {
+					data->ssl_versions |= version;
+				} else if ('+' == op) {
+					data->ssl_versions &= ~version;
+				} else {
+					ctx->error_msg = "+ OR - expected";
+					return -1;
+				}
+			}
+			if (0 <= rc)
+				rc = 1;
 		} else if (ISARG("SSLVERSIONS")) {
 #define ARGS \
 	/* xmacro(name, op) */ \

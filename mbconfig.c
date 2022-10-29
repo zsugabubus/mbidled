@@ -410,7 +410,7 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 				data->login_auth |= ISARG("*") || ISARG("LOGIN");
 			if (0 <= rc)
 				rc = 1;
-		} else if (ISARG("SSLTYPE")) {
+		} else if (ISARG("TLSTYPE") || ISARG("SSLTYPE")) {
 			if (!(rc = get_kw(ctx))) {
 				continue;
 			} else if (rc < 0) {

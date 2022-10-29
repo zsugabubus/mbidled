@@ -387,7 +387,7 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 
 	data->system_certs = 1;
 	data->login_auth = 1;
-	data->ssl_versions = SSL_OP_NO_SSLv3;
+	data->ssl_versions = SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1;
 
 	SECTION_FOREACH {
 		if (ISARG("HOST")) {

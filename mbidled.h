@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 
-extern char const *opt_config;
 extern char const *opt_cmd;
 extern int opt_reaction_time;
 extern int opt_rerun_delay;

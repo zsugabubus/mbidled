@@ -3,6 +3,7 @@
 #include <openssl/ssl.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -17,7 +18,6 @@ static char const USAGE[] =
 	"\n"
 	"Try man mbidled(1) for more information.\n";
 
-char const *opt_config = NULL;
 char const *opt_cmd =
 	"mbsync -c \"$MBIDLED_CONFIG\" \"$MBIDLED_CHANNEL:$MBIDLED_MAILBOX\"";
 int opt_verbose = 0;
@@ -61,6 +61,8 @@ main(int argc, char *argv[])
 		.sa_handler = SIG_IGN,
 	}, NULL);
 
+	char const *opt_config = NULL;
+
 	for (int opt; 0 <= (opt = getopt(argc, argv, "c:e:d:D:vh"));) {
 		switch (opt) {
 		case 'c':
@@ -85,9 +87,31 @@ main(int argc, char *argv[])
 		}
 	}
 
+	char path_xdg[PATH_MAX], path_legacy[PATH_MAX];
 	if (!opt_config) {
-		fprintf(stderr, "missing required option -- 'c'\n");
-		return EXIT_FAILURE;
+		char const *config_home = getenv("XDG_CONFIG_HOME");
+		char const *home = getenv("HOME");
+		ASSERT(home);
+
+		if (config_home)
+			ASSERT_SNPRINTF(path_xdg, "%s/isyncrc", config_home);
+		else
+			ASSERT_SNPRINTF(path_xdg, "%s/.config/isyncrc", home);
+
+		ASSERT_SNPRINTF(path_legacy, "%s/.mbsyncrc", home);
+
+		struct stat st;
+		int xdg = !lstat(path_xdg, &st);
+		int legacy = !lstat(path_legacy, &st);
+		if (!xdg && legacy) {
+			opt_config = path_legacy;
+		} else if (xdg && legacy) {
+			fprintf(stderr, "Using configuration file %s instead of legacy %s.\n",
+					path_xdg, path_legacy);
+			opt_config = path_xdg;
+		} else {
+			opt_config = path_xdg;
+		}
 	}
 
 	struct mbconfig mb_config;

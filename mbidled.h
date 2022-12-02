@@ -19,10 +19,8 @@ void print_log_context(int priority, char const *group, char const *name);
 )
 
 #define ASSERT(c) do { \
-	if (!(c)) { \
-		fprintf(stderr, "Assertion failed at %s:%u. That's all we know.", __FILE__, __LINE__); \
+	if (!(c)) \
 		abort(); \
-	} \
 } while (0)
 
 #define ASSERT_SNPRINTF(buf, ...) \

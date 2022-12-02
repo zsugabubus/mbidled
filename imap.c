@@ -48,7 +48,6 @@ struct imap_store {
 		CMD_LIST,
 		CMD_EXAMINE,
 		CMD_IDLE,
-		CMD_LOGOUT,
 	} cmd;
 	int cmd_tag;
 	int seq_num;

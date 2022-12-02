@@ -159,16 +159,14 @@ write_cmdf(struct imap_store *store, enum cmd cmd, char const *fmt, ...)
 
 		case 'q':
 			for (char const *s = arg;;) {
-				int skip = s != arg;
-				size_t n = strcspn(s + skip, "\"\\");
-				size_t len = skip + n;
-				if (len) {
-					BIO_write(store->bio, s, len);
-					s += len;
-				}
+				size_t n = strcspn(s, "\"\\");
+				BIO_write(store->bio, s, n);
+				s += n;
 				if (!*s)
 					break;
 				BIO_write(store->bio, "\\", 1);
+				BIO_write(store->bio, s, 1);
+				s += 1;
 			}
 			break;
 

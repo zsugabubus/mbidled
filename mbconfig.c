@@ -127,6 +127,7 @@ get_line(struct mbconfig_parser *ctx)
 	 * terminate lines with \n, it is also good if you pad it with spaces
 	 * to 1023 characters. */
 	if (!fgets(ctx->buf, sizeof ctx->buf, ctx->stream)) {
+		*ctx->buf = '\0';
 		if (ferror(ctx->stream)) {
 			ctx->error_msg = strerror(EIO);
 			return -1;

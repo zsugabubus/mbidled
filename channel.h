@@ -22,35 +22,21 @@ struct channel {
 void channel_open(EV_P_ struct mbconfig *mb_config, struct mbconfig_channel *mb_chan);
 void channel_notify_change(struct channel *chan, struct mbconfig_store *mb_store,
 		char const *mailbox);
-void channel_vlog(struct channel const *chan, int priority,
-		char const *group, char const *name,
-		char const *format, va_list ap);
 
 void imap_open_store(struct channel *chan, struct mbconfig_store *mb_store);
 void maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store);
 
-#define DEFINE_CHANNEL_STORE_LOGGER(prefix, name) \
+void channel_log(struct channel *chan, int priority, char const *format, ...);
+void channel_store_log(struct channel *chan, char const *store_name, char const *mailbox,
+		int priority, char const *format, va_list ap);
+
+#define DEFINE_CHANNEL_STORE_LOGGER(store, store_name) \
 	static void \
-	prefix##_vlog(struct channel *chan, char const *mailbox_name, int priority, char const *format, va_list ap) \
-	{ \
-		channel_vlog(chan, priority, name, mailbox_name, format, ap); \
-	} \
- \
-	static void \
-	prefix##_log(struct channel *chan, int priority, char const *format, ...) \
+	store##_log(struct store##_store *store, int priority, char const *format, ...) \
 	{ \
 		va_list ap; \
 		va_start(ap, format); \
-		prefix##_vlog(chan, NULL, priority, format, ap); \
-		va_end(ap); \
-	} \
- \
-	static void \
-	store_log(struct prefix##_store *store, int priority, char const *format, ...) \
-	{ \
-		va_list ap; \
-		va_start(ap, format); \
-		prefix##_vlog(store->chan, store->mailbox, priority, format, ap); \
+		channel_store_log(store->chan, store_name, store->mailbox, priority, format, ap); \
 		va_end(ap); \
 	}
 

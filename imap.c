@@ -96,7 +96,7 @@ imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 	int inbox = !strcmp(mailbox, "INBOX");
 
 	if (!mbconfig_patterns_test(&chan->mb_chan->patterns, mailbox)) {
-		imap_log(chan, LOG_DEBUG, "Mailbox [%s] not matched", mailbox);
+		channel_log(chan, LOG_DEBUG, "Mailbox [%s] not matched", mailbox);
 		/* INBOX must be always watced. */
 		if (!inbox)
 			return;
@@ -111,7 +111,7 @@ imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 
 	store->list_mailboxes = inbox;
 
-	store_log(store, LOG_INFO, "Watching");
+	imap_log(store, LOG_INFO, "Watching");
 
 	ev_init(&store->io_watcher, io_cb);
 	ev_init(&store->timeout_watcher, timeout_cb);
@@ -184,19 +184,19 @@ write_cmdf(struct imap_store *store, enum cmd cmd, char const *fmt, ...)
 static void
 imap_notify_change(struct imap_store *store)
 {
-	store_log(store, LOG_DEBUG, "Changed");
+	imap_log(store, LOG_DEBUG, "Changed");
 	channel_notify_change(store->chan, store->mb_store, store->mailbox);
 }
 
 static void
 feed(struct imap_store *store, char *line)
 {
-	store_log(store, LOG_DEBUG, "S: %s", line);
+	imap_log(store, LOG_DEBUG, "S: %s", line);
 
 	if (*line == '*' || *line == '+') switch (store->cmd) {
 	case CMD_NONE:
 		if (strncmp(line, "* OK ", 5)) {
-			store_log(store, LOG_ERR, "OK expected.");
+			imap_log(store, LOG_ERR, "OK expected");
 			store->state = STATE_ERROR;
 			return;
 		}
@@ -247,12 +247,12 @@ feed(struct imap_store *store, char *line)
 
 	int line_tag = strtol(line, &line, 10);
 	if (line_tag != store->cmd_tag) {
-		store_log(store, LOG_ERR, "Received response with unknown tag %d", line_tag);
+		imap_log(store, LOG_ERR, "Received response with unknown tag %d", line_tag);
 		return;
 	}
 
 	if (memcmp(line, " OK ", 4)) {
-		store_log(store, LOG_ERR, "OK expected.");
+		imap_log(store, LOG_ERR, "OK expected");
 		store->state = STATE_ERROR;
 		return;
 	}
@@ -260,13 +260,13 @@ feed(struct imap_store *store, char *line)
 	switch (store->cmd) {
 	case CMD_CAPABILITY:
 		if (!(store->cap & CAP_IDLE)) {
-			store_log(store, LOG_ERR, "IDLE not supported.");
+			imap_log(store, LOG_ERR, "IDLE not supported");
 			store->state = STATE_ERROR;
 			return;
 		}
 
 		if (store->cap & CAP_LOGINDISABLED) {
-			store_log(store, LOG_ERR, "LOGIN disabled by the server.");
+			imap_log(store, LOG_ERR, "LOGIN disabled by the server");
 			store->state = STATE_ERROR;
 			return;
 		}
@@ -274,9 +274,9 @@ feed(struct imap_store *store, char *line)
 		struct mbconfig_imap_account *mb_account =
 			store->mb_store->imap_store->account;
 
-		store_log(store, LOG_DEBUG, "Logging in...");
+		imap_log(store, LOG_DEBUG, "Logging in...");
 		if (!mb_account->login_auth) {
-			store_log(store, LOG_ERR, "LOGIN disabled by the user.");
+			imap_log(store, LOG_ERR, "LOGIN disabled by the user");
 			store->state = STATE_ERROR;
 			return;
 		}
@@ -285,7 +285,7 @@ feed(struct imap_store *store, char *line)
 		mbconfig_eval_cmd_option(&mb_account->pass, mb_account->pass_cmd);
 
 		if (!mb_account->user || !mb_account->pass) {
-			store_log(store, LOG_ERR, "Missing User and/or Pass.");
+			imap_log(store, LOG_ERR, "Missing User and/or Pass");
 			store->state = STATE_ERROR;
 			return;
 		}
@@ -297,7 +297,7 @@ feed(struct imap_store *store, char *line)
 		break;
 
 	case CMD_LOGIN:
-		store_log(store, LOG_NOTICE, "Logged in.");
+		imap_log(store, LOG_NOTICE, "Logged in");
 
 		if (store->list_mailboxes) {
 			write_cmdf(store, CMD_LIST,
@@ -389,7 +389,7 @@ create_transport(struct imap_store *store)
 			if (dup2(pair[0], STDIN_FILENO) < 0 ||
 			    dup2(pair[0], STDOUT_FILENO) < 0 ||
 			    execl("/bin/sh", "sh", "-c", mb_account->tunnel_cmd, NULL) < 0)
-				store_log(store, LOG_ERR, "exec() failed: %s", strerror(errno));
+				imap_log(store, LOG_ERR, "exec() failed: %s", strerror(errno));
 			_exit(EXIT_FAILURE);
 		}
 
@@ -448,7 +448,7 @@ do_poll(struct imap_store *store)
 			break;
 		}
 
-		store_log(store, LOG_DEBUG, "Connecting...");
+		imap_log(store, LOG_DEBUG, "Connecting...");
 		store->state = STATE_CONNECTING;
 		break;
 
@@ -472,10 +472,10 @@ do_poll(struct imap_store *store)
 		break;
 
 	case STATE_CONNECTED:
-		store_log(store, LOG_DEBUG, "Connected.");
+		imap_log(store, LOG_DEBUG, "Connected");
 
 		if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_IMAPS) {
-			store_log(store, LOG_DEBUG, "Performing SSL handshake...");
+			imap_log(store, LOG_DEBUG, "Performing SSL handshake...");
 			store->state = STATE_CONNECTING_SSL;
 		} else {
 			store->state = STATE_ESTABLISHED;
@@ -502,7 +502,7 @@ do_poll(struct imap_store *store)
 		int err;
 		BIO_get_ssl(store->bio, &ssl);
 		if ((untrusted_cert = SSL_get_peer_certificate(ssl)) == NULL) {
-			store_log(store, LOG_ERR, "No certificate.");
+			imap_log(store, LOG_ERR, "No certificate");
 			store->state = STATE_ERROR;
 			break;
 		} else if ((err = SSL_get_verify_result(ssl)) != X509_V_OK) {
@@ -516,7 +516,7 @@ do_poll(struct imap_store *store)
 					goto cert_trusted;
 			}
 
-			store_log(store, LOG_ERR, "Certificate verification failed: %s.",
+			imap_log(store, LOG_ERR, "Certificate verification failed: %s",
 					X509_verify_cert_error_string(err));
 			if (opt_verbose)
 				X509_print_fp(stdout, untrusted_cert);
@@ -527,12 +527,12 @@ do_poll(struct imap_store *store)
 		}
 	}
 
-		store_log(store, LOG_DEBUG, "SSL connection established.");
+		imap_log(store, LOG_DEBUG, "SSL connection established");
 		store->state = STATE_ESTABLISHED;
 		break;
 
 	case STATE_ESTABLISHED:
-		store_log(store, LOG_DEBUG, "Connection established.");
+		imap_log(store, LOG_DEBUG, "Connection established");
 		store->state = STATE_IMAP;
 		break;
 
@@ -552,7 +552,7 @@ do_poll(struct imap_store *store)
 		break;
 
 	case STATE_DISCONNECTED:
-		store_log(store, LOG_ERR, "Disconnected.");
+		imap_log(store, LOG_ERR, "Disconnected");
 		ev_timer_stop(EV_A_ &store->timeout_watcher);
 		ev_timer_set(&store->timeout_watcher, 3, 0);
 		ev_timer_start(EV_A_ &store->timeout_watcher);
@@ -560,7 +560,7 @@ do_poll(struct imap_store *store)
 		break;
 
 	case STATE_ERROR:
-		store_log(store, LOG_ERR, "Error.");
+		imap_log(store, LOG_ERR, "Error");
 		ERR_print_errors_fp(stderr);
 		ev_timer_stop(EV_A_ &store->timeout_watcher);
 		ev_timer_set(&store->timeout_watcher, 5 * 60, 0);

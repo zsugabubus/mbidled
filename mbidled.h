@@ -8,9 +8,7 @@ extern int opt_reaction_time;
 extern int opt_rerun_delay;
 extern int opt_verbose;
 
-void print_vlog(int priority, char const *format, va_list ap);
-void print_log(int priority, char const *format, ...);
-void print_log_context(int priority, char const *group, char const *name);
+void print_log(int priority, char const *message);
 
 #define container_of(ptr, base, member) (base *)( \
 	/* typeof(ptr) == typeof(base->member) */ \

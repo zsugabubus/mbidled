@@ -45,34 +45,37 @@ channel_store_open(struct channel *chan, struct mbconfig_store *mb_store)
 	}
 }
 
-static void
-channel_log_context(struct channel const *chan, int priority)
-{
-	print_log_context(priority, "Channel", chan->mb_chan->name);
-}
-
 void
-channel_vlog(struct channel const *chan, int priority,
-		char const *group, char const *name,
-		char const *format, va_list ap)
-{
-	channel_log_context(chan, priority);
-	print_log_context(priority, group, name);
-	print_vlog(priority, format, ap);
-	print_log(priority, "\n");
-}
-
-static void
 channel_log(struct channel *chan, int priority, char const *format, ...)
 {
-	channel_log_context(chan, priority);
+	char buf[1024];
+	int n;
+	n = snprintf(buf, sizeof buf, "Channel [%s]: ", chan->mb_chan->name);
+	if ((int)sizeof buf < n)
+		n = (int)sizeof buf;
 
 	va_list ap;
 	va_start(ap, format);
-	print_vlog(priority, format, ap);
+	vsnprintf(buf + n, sizeof buf - n, format, ap);
 	va_end(ap);
 
-	print_log(priority, "\n");
+	print_log(priority, buf);
+}
+
+void
+channel_store_log(struct channel *chan, char const *store_name, char const *mailbox,
+		int priority, char const *format, va_list ap)
+{
+	char buf[1024];
+	int n;
+	n = snprintf(buf, sizeof buf, "Channel [%s]: %s [%s]: ",
+			chan->mb_chan->name, store_name, mailbox);
+	if ((int)sizeof buf < n)
+		n = (int)sizeof buf;
+
+	vsnprintf(buf + n, sizeof buf - n, format, ap);
+
+	print_log(priority, buf);
 }
 
 void
@@ -145,7 +148,7 @@ child_cb(EV_P_ ev_child *w, int revents)
 
 	int ok = WIFEXITED(w->rstatus) && WEXITSTATUS(w->rstatus) == EXIT_SUCCESS;
 	int level = ok ? LOG_INFO : LOG_ERR;
-	channel_log(box->chan, level, "Mailbox [%s] command terminated with %s.",
+	channel_log(box->chan, level, "Mailbox [%s] command terminated with %s",
 			box->mailbox,
 			ok ? "success" : "failure");
 }

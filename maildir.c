@@ -25,7 +25,7 @@ DEFINE_CHANNEL_STORE_LOGGER(maildir, "Maildir")
 static void
 maildir_notify_change(struct maildir_store *store)
 {
-	store_log(store, LOG_DEBUG, "Changed");
+	maildir_log(store, LOG_DEBUG, "Changed");
 	channel_notify_change(store->chan, store->mb_store, store->mailbox);
 }
 
@@ -52,12 +52,12 @@ maildir_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 	char tmp[PATH_MAX];
 	ASSERT_SNPRINTF(tmp, "%s/cur", mailbox_path);
 	if (access(tmp, X_OK)) {
-		maildir_log(chan, LOG_DEBUG, "%s: Not a maildir", mailbox_path);
+		channel_log(chan, LOG_DEBUG, "%s: Not a maildir", mailbox_path);
 		return;
 	}
 
 	if (!mbconfig_patterns_test(&chan->mb_chan->patterns, mailbox)) {
-		maildir_log(chan, LOG_DEBUG, "Mailbox [%s] not matched", mailbox);
+		channel_log(chan, LOG_DEBUG, "Mailbox [%s] not matched", mailbox);
 		return;
 	}
 
@@ -68,7 +68,7 @@ maildir_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 	store->mb_store = mb_store;
 	ASSERT(store->mailbox = strdup(mailbox));
 
-	store_log(store, LOG_INFO, "Watching path %s", mailbox_path);
+	maildir_log(store, LOG_INFO, "Watching path %s", mailbox_path);
 
 	int poll_interval = chan->mb_chan->mbidled.start_interval;
 

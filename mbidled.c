@@ -23,31 +23,11 @@ char const *opt_cmd =
 int opt_verbose = 0;
 
 void
-print_vlog(int priority, char const *format, va_list ap)
+print_log(int priority, char const *message)
 {
-	switch (priority) {
-	case LOG_INFO:
-	case LOG_DEBUG:
-		if (!opt_verbose)
-			return;
-	}
-
-	vfprintf(stderr, format, ap);
-}
-
-void
-print_log(int priority, char const *format, ...)
-{
-	va_list ap;
-	va_start(ap, format);
-	print_vlog(priority, format, ap);
-	va_end(ap);
-}
-
-void
-print_log_context(int priority, char const *group, char const *name)
-{
-	print_log(priority, name ? "%s [%s]: " : "%s: ", group, name);
+	if (!opt_verbose && priority > LOG_NOTICE)
+		return;
+	(void)fprintf(stderr, "<%d>%s\n", priority, message);
 }
 
 int

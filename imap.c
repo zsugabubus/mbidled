@@ -208,7 +208,7 @@ feed(struct imap_store *store, char *line)
 	case CMD_CAPABILITY:
 		if (strncmp(line, "* CAPABILITY ", 13))
 			return; /* Ignore. */
-		line += 13;
+		line += 12;
 
 		store->cap = 0;
 		if (strstr(line, " IDLE"))

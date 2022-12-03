@@ -93,6 +93,15 @@ static void
 imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 		char const *mailbox)
 {
+	int inbox = !strcmp(mailbox, "INBOX");
+
+	if (!mbconfig_patterns_test(&chan->mb_chan->patterns, mailbox)) {
+		imap_log(chan, LOG_DEBUG, "Mailbox [%s] not matched", mailbox);
+		/* INBOX must be always watced. */
+		if (!inbox)
+			return;
+	}
+
 	struct imap_store *store;
 	ASSERT(store = malloc(sizeof *store));
 
@@ -100,7 +109,7 @@ imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 	store->mb_store = mb_store;
 	ASSERT(store->mailbox = strdup(mailbox));
 
-	store->list_mailboxes = !strcmp(store->mailbox, "INBOX");
+	store->list_mailboxes = inbox;
 
 	store_log(store, LOG_INFO, "Watching");
 
@@ -111,22 +120,10 @@ imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 	do_poll(store);
 }
 
-static void
-imap_try_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
-		char const *mailbox)
-{
-	if (!mbconfig_patterns_test(&chan->mb_chan->patterns, mailbox)) {
-		imap_log(chan, LOG_DEBUG, "Mailbox [%s] not matched", mailbox);
-		return;
-	}
-
-	imap_open_mailbox(chan, mb_store, mailbox);
-}
-
 void
 imap_open_store(struct channel *chan, struct mbconfig_store *mb_store)
 {
-	assert(MBCONFIG_STORE_IMAP == mb_store->type);
+	assert(mb_store->type == MBCONFIG_STORE_IMAP);
 	imap_open_mailbox(chan, mb_store, "INBOX");
 }
 
@@ -196,7 +193,7 @@ feed(struct imap_store *store, char *line)
 {
 	store_log(store, LOG_DEBUG, "S: %s", line);
 
-	if ('*' == *line || '+' == *line) switch (store->cmd) {
+	if (*line == '*' || *line == '+') switch (store->cmd) {
 	case CMD_NONE:
 		if (strncmp(line, "* OK ", 5)) {
 			store_log(store, LOG_ERR, "OK expected.");
@@ -210,8 +207,7 @@ feed(struct imap_store *store, char *line)
 
 	case CMD_CAPABILITY:
 		if (strncmp(line, "* CAPABILITY ", 13))
-			/* Ignore. */
-			return;
+			return; /* Ignore. */
 		line += 13;
 
 		store->cap = 0;
@@ -223,8 +219,7 @@ feed(struct imap_store *store, char *line)
 
 	case CMD_LIST:
 		if (strncmp(line, "* LIST ", 7))
-			/* Ignore. */
-			return;
+			return; /* Ignore. */
 		line += 7;
 
 	{
@@ -232,7 +227,7 @@ feed(struct imap_store *store, char *line)
 		char const *mailbox = strstr(line, NAMESPACE);
 		if (mailbox) {
 			mailbox += sizeof NAMESPACE - 1;
-			imap_try_open_mailbox(store->chan, store->mb_store, mailbox);
+			imap_open_mailbox(store->chan, store->mb_store, mailbox);
 		}
 	}
 
@@ -240,8 +235,7 @@ feed(struct imap_store *store, char *line)
 
 	case CMD_IDLE:
 		if (!('0' <= line[2] && line[2] <= '9'))
-			/* Ignore. */
-			return;
+			return; /* Ignore. */
 
 		imap_notify_change(store);
 		return;
@@ -265,13 +259,13 @@ feed(struct imap_store *store, char *line)
 
 	switch (store->cmd) {
 	case CMD_CAPABILITY:
-		if (!(CAP_IDLE & store->cap)) {
+		if (!(store->cap & CAP_IDLE)) {
 			store_log(store, LOG_ERR, "IDLE not supported.");
 			store->state = STATE_ERROR;
 			return;
 		}
 
-		if (CAP_LOGINDISABLED & store->cap) {
+		if (store->cap & CAP_LOGINDISABLED) {
 			store_log(store, LOG_ERR, "LOGIN disabled by the server.");
 			store->state = STATE_ERROR;
 			return;
@@ -346,18 +340,18 @@ create_transport(struct imap_store *store)
 	SSL_CTX *ctx = NULL;
 	BIO *chain = NULL, *bio = NULL;
 
-	if (!(bio = BIO_new(BIO_f_buffer())))
+	if ((bio = BIO_new(BIO_f_buffer())) == NULL)
 		goto fail;
 	chain = BIO_push(chain, bio), bio = NULL;
 
-	if (MBCONFIG_SSL_IMAPS == mb_account->ssl) {
-		if (!(ctx = SSL_CTX_new(TLS_client_method())) ||
+	if (mb_account->ssl == MBCONFIG_SSL_IMAPS) {
+		if ((ctx = SSL_CTX_new(TLS_client_method())) == NULL ||
 		    (mb_account->system_certs &&
-		     1 != SSL_CTX_set_default_verify_paths(ctx)) ||
-		    (mb_account->cert_file &&
-		     1 != X509_STORE_load_locations(
+		     SSL_CTX_set_default_verify_paths(ctx) != 1) ||
+		    (mb_account->cert_file != NULL &&
+		     X509_STORE_load_locations(
 				SSL_CTX_get_cert_store(ctx),
-				mb_account->cert_file, NULL)))
+				mb_account->cert_file, NULL) != 1))
 			goto fail;
 
 		/* Continue handshake even if certificate seems invalid.
@@ -367,14 +361,14 @@ create_transport(struct imap_store *store)
 		SSL_CTX_set_options(ctx, mb_account->ssl_versions);
 
 		SSL *ssl = NULL;
-		if (!(bio = BIO_new_ssl(ctx, 1 /* Client. */)) ||
-		    1 != BIO_get_ssl(bio, &ssl) ||
-		    (mb_account->host &&
-		     1 != SSL_set1_host(ssl, mb_account->host)) ||
-		    (mb_account->ciphers &&
-		     1 != SSL_set_cipher_list(ssl, mb_account->ciphers)) ||
-		    (mb_account->host &&
-		     1 != SSL_set_tlsext_host_name(ssl, mb_account->host)))
+		if ((bio = BIO_new_ssl(ctx, 1 /* Client. */)) == NULL ||
+		    BIO_get_ssl(bio, &ssl) != 1 ||
+		    (mb_account->host != NULL &&
+		     SSL_set1_host(ssl, mb_account->host) != 1) ||
+		    (mb_account->ciphers != NULL &&
+		     SSL_set_cipher_list(ssl, mb_account->ciphers) != 1) ||
+		    (mb_account->host != NULL &&
+		     SSL_set_tlsext_host_name(ssl, mb_account->host) != 1))
 			goto fail;
 
 		SSL_set_mode(ssl,
@@ -401,8 +395,8 @@ create_transport(struct imap_store *store)
 
 		close(pair[0]);
 
-		if (!(bio = BIO_new_fd(pair[1], 1 /* Close. */)) ||
-		    1 != BIO_set_nbio(bio, 1))
+		if ((bio = BIO_new_fd(pair[1], 1 /* Close. */)) == NULL ||
+		    BIO_set_nbio(bio, 1) != 1)
 			goto fail;
 	} else {
 		char const *port = mb_account->port;
@@ -415,10 +409,10 @@ create_transport(struct imap_store *store)
 			port = DEFAULT_PORTS[mb_account->ssl];
 		}
 
-		if (!(bio = BIO_new(BIO_s_connect())) ||
-		    1 != BIO_set_nbio(bio, 1) ||
-		    1 != BIO_set_conn_hostname(bio, mb_account->host) ||
-		    1 != BIO_set_conn_port(bio, port))
+		if ((bio = BIO_new(BIO_s_connect())) == NULL ||
+		    BIO_set_nbio(bio, 1) != 1 ||
+		    BIO_set_conn_hostname(bio, mb_account->host) != 1 ||
+		    BIO_set_conn_port(bio, port) != 1)
 			goto fail;
 	}
 	chain = BIO_push(chain, bio), bio = NULL;
@@ -459,7 +453,7 @@ do_poll(struct imap_store *store)
 		break;
 
 	case STATE_CONNECTING:
-		if (1 != (rc = BIO_do_connect(store->bio)))
+		if ((rc = BIO_do_connect(store->bio)) != 1)
 			if (!BIO_should_retry(store->bio)) {
 				store->state = STATE_ERROR;
 				break;
@@ -471,7 +465,7 @@ do_poll(struct imap_store *store)
 			ev_io_start(EV_A_ &store->io_watcher);
 		}
 
-		if (1 != rc)
+		if (rc != 1)
 			return;
 
 		store->state = STATE_CONNECTED;
@@ -480,7 +474,7 @@ do_poll(struct imap_store *store)
 	case STATE_CONNECTED:
 		store_log(store, LOG_DEBUG, "Connected.");
 
-		if (MBCONFIG_SSL_IMAPS == store->mb_store->imap_store->account->ssl) {
+		if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_IMAPS) {
 			store_log(store, LOG_DEBUG, "Performing SSL handshake...");
 			store->state = STATE_CONNECTING_SSL;
 		} else {
@@ -490,7 +484,7 @@ do_poll(struct imap_store *store)
 
 	case STATE_CONNECTING_SSL:
 		/* Use first bio in the chain to let OpenSSL find SSL BIO. */
-		if (1 != BIO_do_handshake(store->bio)) {
+		if (BIO_do_handshake(store->bio) != 1) {
 			if (BIO_should_retry(store->bio))
 				return;
 
@@ -507,11 +501,11 @@ do_poll(struct imap_store *store)
 		X509 *untrusted_cert;
 		int err;
 		BIO_get_ssl(store->bio, &ssl);
-		if (!(untrusted_cert = SSL_get_peer_certificate(ssl))) {
+		if ((untrusted_cert = SSL_get_peer_certificate(ssl)) == NULL) {
 			store_log(store, LOG_ERR, "No certificate.");
 			store->state = STATE_ERROR;
 			break;
-		} else if (X509_V_OK != (err = SSL_get_verify_result(ssl))) {
+		} else if ((err = SSL_get_verify_result(ssl)) != X509_V_OK) {
 			SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
 			X509_STORE *cert_store = SSL_CTX_get_cert_store(ctx);
 			STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(cert_store);

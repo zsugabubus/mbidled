@@ -143,7 +143,7 @@ child_cb(EV_P_ ev_child *w, int revents)
 			box->chan->mb_chan->mbidled.start_interval, 0);
 	ev_timer_start(EV_A_ &box->timeout_watcher);
 
-	int ok = WIFEXITED(w->rstatus) && EXIT_SUCCESS == WEXITSTATUS(w->rstatus);
+	int ok = WIFEXITED(w->rstatus) && WEXITSTATUS(w->rstatus) == EXIT_SUCCESS;
 	int level = ok ? LOG_INFO : LOG_ERR;
 	channel_log(box->chan, level, "Mailbox [%s] command terminated with %s.",
 			box->mailbox,

@@ -24,6 +24,6 @@ void print_log_context(int priority, char const *group, char const *name);
 } while (0)
 
 #define ASSERT_SNPRINTF(buf, ...) \
-	ASSERT((int)sizeof buf > snprintf(buf, sizeof buf, __VA_ARGS__))
+	ASSERT(snprintf(buf, sizeof buf, __VA_ARGS__) < (int)sizeof buf)
 
 #endif

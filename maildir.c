@@ -46,7 +46,7 @@ new_stat_cb(EV_P_ ev_stat *w, int revents)
 }
 
 static void
-maildir_try_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
+maildir_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 		char const *mailbox_path, char const *mailbox)
 {
 	char tmp[PATH_MAX];
@@ -87,11 +87,11 @@ maildir_try_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
 void
 maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store)
 {
-	assert(MBCONFIG_STORE_MAILDIR == mb_store->type);
+	assert(mb_store->type == MBCONFIG_STORE_MAILDIR);
 	struct mbconfig_maildir_store *mb_maildir_store = mb_store->maildir_store;
 
 	if (mb_maildir_store->inbox)
-		maildir_try_open_mailbox(chan, mb_store, mb_maildir_store->inbox, "INBOX");
+		maildir_open_mailbox(chan, mb_store, mb_maildir_store->inbox, "INBOX");
 
 	/* Path is a prefix in fact. Go to parent and scan all files. */
 	char maildir_path[PATH_MAX];
@@ -111,7 +111,7 @@ maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store)
 		if (mb_maildir_store->inbox &&
 		    !strcmp(mb_maildir_store->inbox, mailbox_path))
 			continue;
-		maildir_try_open_mailbox(chan, mb_store, mailbox_path, dent->d_name);
+		maildir_open_mailbox(chan, mb_store, mailbox_path, dent->d_name);
 	}
 
 	ASSERT(!closedir(dir));

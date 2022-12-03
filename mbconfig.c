@@ -42,7 +42,7 @@ get_arg(struct mbconfig_parser *ctx, char delim, int caseless)
 {
 	for (;; ++ctx->col) {
 		char const *s = ctx->buf + ctx->col;
-		if (!*s || ('#' == *s && strncmp(MBIDLED_CMD_PREFIX, s, sizeof MBIDLED_CMD_PREFIX - 1)))
+		if (!*s || (*s == '#' && strncmp(MBIDLED_CMD_PREFIX, s, sizeof MBIDLED_CMD_PREFIX - 1)))
 			return 0;
 		if (isspace(*s))
 			continue;
@@ -56,9 +56,9 @@ get_arg(struct mbconfig_parser *ctx, char delim, int caseless)
 
 	for (char c; (c = ctx->buf[ctx->col]);) {
 		++ctx->col;
-		if (!escaped && '\\' == c) {
+		if (!escaped && c == '\\') {
 			escaped = 1;
-		} else if (!escaped && '"' == c) {
+		} else if (!escaped && c == '"') {
 			quoted ^= 1;
 		} else if (!escaped && !quoted && (isspace(c) || (delim == c))) {
 			break;
@@ -201,7 +201,7 @@ parse_path(struct mbconfig_parser *ctx, char **data)
 		return rc;
 
 	char *s = ctx->buf;
-	if ('~' == *s) {
+	if (*s == '~') {
 		++s;
 
 		char *slash = strchr(s, '/');
@@ -339,7 +339,7 @@ preprocess_cmd(struct mbconfig_parser *ctx, int global)
 	struct mbconfig_mbidled_channel *c = &ctx->channel_config[global];
 
 	if (ISARG(MBIDLED_CMD_PREFIX "STRICTPROPAGATE")) {
-		if (1 != (rc = get_kw(ctx)))
+		if ((rc = get_kw(ctx)) != 1)
 			return rc;
 		if (ISARG("NONE")) {
 			c->strict_propagate = 0;
@@ -443,9 +443,9 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 					return -1;
 				}
 
-				if ('-' == op) {
+				if (op == '-') {
 					data->ssl_versions |= version;
-				} else if ('+' == op) {
+				} else if (op == '+') {
 					data->ssl_versions &= ~version;
 				} else {
 					ctx->error_msg = "+ OR - expected";
@@ -684,7 +684,7 @@ mbconfig_eval_cmd_option(char **option, char const *option_cmd)
 
 	char buf[8192];
 
-	option_cmd += '+' == *option_cmd;
+	option_cmd += *option_cmd == '+';
 	FILE *stream = popen(option_cmd, "r");
 	if (!stream)
 		return;
@@ -701,17 +701,17 @@ mbconfig_eval_cmd_option(char **option, char const *option_cmd)
 int
 match_pattern(char const *pat, char const *s)
 {
-	if ('*' == *pat) {
+	if (*pat == '*') {
 		return
 			/* Continue * match. */
 			(*s && match_pattern(pat, s + 1)) ||
 			/* End of * match. */
 			match_pattern(pat + 1, s);
-	} else if ('%' == *pat) {
+	} else if (*pat == '%') {
 		/* '/' seems to be the hardcoded hierarchy delimiter. */
 		return
 			/* Continue % match. */
-			(*s && '/' != *s && match_pattern(pat, s + 1)) ||
+			(*s && *s != '/' && match_pattern(pat, s + 1)) ||
 			/* End of % match. */
 			match_pattern(pat + 1, s);
 	} else if (*pat == *s) {
@@ -737,7 +737,7 @@ mbconfig_patterns_test(struct mbconfig_str_list const *patterns, char const *s)
 	SLIST_FOREACH(pattern, patterns, link) {
 		int not;
 		char const *pat = pattern->str;
-		pat += (not = '!' == *pat);
+		pat += (not = (*pat == '!'));
 		if (match_pattern(pat, s))
 			return !not;
 	}

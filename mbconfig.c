@@ -146,6 +146,7 @@ read_line(struct mbconfig_parser *ctx)
 			}
 			return NONE;
 		}
+		ctx->buf[strcspn(ctx->buf, "\r\n")] = '\0';
 
 		if (strncmp(MBIDLED_CMD_PREFIX, ctx->buf, strlen(MBIDLED_CMD_PREFIX)) == 0)
 			break;

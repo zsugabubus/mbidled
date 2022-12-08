@@ -611,6 +611,9 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 	SLIST_INIT(&config->channels);
 
 	ctx->lnum = 0;
+	ctx->col = 0;
+	*ctx->buf = '\0';
+	ctx->arg = ctx->buf;
 
 	config->filename = strdup(filename);
 	if (config->filename == NULL)
@@ -622,10 +625,6 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 		ctx->error_msg = strerror(errno);
 		return ERR;
 	}
-
-	ctx->col = 0;
-	*ctx->buf = '\0';
-	ctx->arg = ctx->buf;
 
 	int rc = NONE;
 	while (rc != ERR &&

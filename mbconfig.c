@@ -25,10 +25,8 @@
 
 #define ALLOC_DATA(slist_head, type) \
 	struct type *data = calloc(1, sizeof *data); \
-	if (!data) { \
-		ctx->error_msg = strerror(ENOMEM); \
-		return -1; \
-	} \
+	if (data == NULL) \
+		abort(); \
 	SLIST_INSERT_HEAD(&ctx->config->slist_head, data, link);
 
 #define SECTION_FOREACH \
@@ -147,19 +145,15 @@ get_cmd(struct mbconfig_parser *ctx)
 	return get_kw(ctx);
 }
 
-static int
+static void
 dup_arg(struct mbconfig_parser *ctx, char **data)
 {
 	free(*data);
-	*data = malloc(ctx->argsz + 1 /* NUL */);
-	if (!*data) {
-		ctx->error_msg = strerror(ENOMEM);
-		return -1;
-	}
+	if ((*data = malloc(ctx->argsz + 1 /* NUL */)) == NULL)
+		abort();
 
 	memcpy(*data, ctx->buf, ctx->argsz);
 	(*data)[ctx->argsz] = '\0';
-	return 1;
 }
 
 static int
@@ -168,7 +162,8 @@ parse_str(struct mbconfig_parser *ctx, char **data)
 	int rc = want_str(ctx);
 	if (rc <= 0)
 		return rc;
-	return dup_arg(ctx, data);
+	dup_arg(ctx, data);
+	return 1;
 }
 
 static int
@@ -221,14 +216,13 @@ parse_path(struct mbconfig_parser *ctx, char **data)
 
 		int n = snprintf(NULL, 0, "%s%s", pw->pw_dir, slash);
 		free(*data);
-		if (!(*data = malloc(n + 1 /* NUL */))) {
-			ctx->error_msg = strerror(ENOMEM);
-			return -1;
-		}
+		if ((*data = malloc(n + 1 /* NUL */)) == NULL)
+			abort();
 		sprintf(*data, "%s%s", pw->pw_dir, slash);
 		return 1;
 	} else {
-		return dup_arg(ctx, data);
+		dup_arg(ctx, data);
+		return 1;
 	}
 }
 
@@ -298,7 +292,8 @@ parse_store(struct mbconfig_parser *ctx, struct mbconfig_store *data)
 		data->mailbox = NULL;
 		return 1;
 	} else {
-		return dup_arg(ctx, &data->mailbox);
+		dup_arg(ctx, &data->mailbox);
+		return 1;
 	}
 
 bad_format:
@@ -315,16 +310,10 @@ parse_str_list(struct mbconfig_parser *ctx, struct mbconfig_str_list *data)
 	int rc;
 	while (0 < (rc = get_str(ctx))) {
 		struct mbconfig_str *pattern = calloc(1, sizeof *pattern);
-		if (!pattern) {
-			ctx->error_msg = strerror(ENOMEM);
-			return -1;
-		}
+		if (pattern == NULL)
+			abort();
 
-		if (dup_arg(ctx, &pattern->str) < 0) {
-			free(pattern);
-			return -1;
-		}
-
+		dup_arg(ctx, &pattern->str);
 		/* Note that patterns are in reverse order. */
 		SLIST_INSERT_HEAD(data, pattern, link);
 	}
@@ -636,10 +625,8 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 	ctx->lnum = 0;
 
 	config->filename = strdup(filename);
-	if (!config->filename) {
-		ctx->error_msg = strerror(ENOMEM);
-		return -1;
-	}
+	if (config->filename == NULL)
+		abort();
 
 	ctx->stream = fopen(filename, "r");
 	if (!ctx->stream) {

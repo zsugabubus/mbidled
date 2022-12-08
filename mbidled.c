@@ -97,7 +97,7 @@ main(int argc, char *argv[])
 	struct mbconfig mb_config;
 	struct mbconfig_parser mb_config_parser;
 	mb_config_parser.config = &mb_config;
-	if (mbconfig_parse(&mb_config_parser, opt_config) < 0) {
+	if (mbconfig_parse(&mb_config_parser, opt_config)) {
 		fprintf(stderr, "%s:%d:%d: %s\n",
 				opt_config,
 				mb_config_parser.lnum,

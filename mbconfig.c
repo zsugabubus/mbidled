@@ -11,17 +11,16 @@
 
 #include "mbconfig.h"
 
+enum {
+	ERR = -1,
+	NONE = 0,
+	OK = 1,
+};
+
 #define MBIDLED_CMD_PREFIX "#MBIDLED:"
 
-#define ISARG(kw) ( \
-	ctx->argsz == sizeof kw - 1 && \
-	!memcmp(ctx->buf, kw, sizeof kw - 1) \
-)
-
-#define ISPREFIXARG(kw) ( \
-	sizeof kw - 1 <= ctx->argsz && \
-	!memcmp(ctx->buf, kw, sizeof kw - 1) \
-)
+#define ISARG(kw) (strcmp(ctx->arg, kw) == 0)
+#define ISPREFIXARG(kw) (strncmp(ctx->arg, kw, strlen(kw)) == 0)
 
 #define ALLOC_DATA(slist_head, type) \
 	struct type *data = calloc(1, sizeof *data); \
@@ -31,17 +30,22 @@
 
 #define SECTION_FOREACH \
 	int rc = parse_str(ctx, &data->name); \
-	while (0 < rc && \
-	       0 < (rc = get_cmd(ctx)) && \
-	       0 < (rc = preprocess_cmd(ctx, 0)))
+	while (rc != ERR && \
+	       (rc = read_line(ctx)) == OK && \
+	       (rc = read_kw(ctx)) == OK && \
+	       (rc = preprocess_cmd(ctx, 0)) == OK)
 
 static int
-get_arg(struct mbconfig_parser *ctx, char delim, int caseless)
+read_arg(struct mbconfig_parser *ctx, int caseless)
 {
-	for (;; ++ctx->col) {
+	for (;; ctx->col += 1) {
 		char const *s = ctx->buf + ctx->col;
-		if (!*s || (*s == '#' && strncmp(MBIDLED_CMD_PREFIX, s, sizeof MBIDLED_CMD_PREFIX - 1)))
-			return 0;
+		if (*s == '\0')
+			return NONE;
+		if (strncmp(MBIDLED_CMD_PREFIX, s, sizeof MBIDLED_CMD_PREFIX - 1) == 0)
+			break;
+		if (*s == '#')
+			return NONE;
 		if (isspace(*s))
 			continue;
 		break;
@@ -50,159 +54,156 @@ get_arg(struct mbconfig_parser *ctx, char delim, int caseless)
 	int quoted = 0;
 	int escaped = 0;
 
-	char *arg = ctx->buf;
+	ctx->arg = ctx->buf + ctx->col;
+	char *p = ctx->arg;
 
-	for (char c; (c = ctx->buf[ctx->col]);) {
-		++ctx->col;
+	for (;;) {
+		char c = ctx->buf[ctx->col];
+		if (c == '\0')
+			break;
+
+		ctx->col += 1;
+
 		if (!escaped && c == '\\') {
 			escaped = 1;
 		} else if (!escaped && c == '"') {
 			quoted ^= 1;
-		} else if (!escaped && !quoted && (isspace(c) || (delim == c))) {
+		} else if (!escaped && !quoted && isspace(c)) {
 			break;
 		} else {
-			/* Make c faster. */
 			if (caseless && islower(c))
 				c = toupper(c);
 
-			*arg++ = c;
+			*p++ = c;
 			escaped = 0;
 		}
 	}
 
 	if (quoted) {
 		ctx->error_msg = "Unterminated quoted string";
-		return -1;
+		return ERR;
 	}
 
 	if (escaped) {
 		ctx->error_msg = "Unterminated escape sequence";
-		return -1;
+		return ERR;
 	}
 
-	*arg = '\0';
+	*p = '\0';
 
-	ctx->argsz = (unsigned short)(arg - ctx->buf);
-	return 1;
+	return OK;
 }
 
 static int
-get_kw(struct mbconfig_parser *ctx)
+read_kw(struct mbconfig_parser *ctx)
 {
-	return get_arg(ctx, '\0', 1);
+	return read_arg(ctx, 1);
 }
 
 static int
-get_str(struct mbconfig_parser *ctx)
+read_str(struct mbconfig_parser *ctx)
 {
-	return get_arg(ctx, '\0', 0);
+	return read_arg(ctx, 0);
 }
 
 static int
-want_str(struct mbconfig_parser *ctx)
+expect_kw(struct mbconfig_parser *ctx)
 {
-	int rc = get_str(ctx);
-	if (!rc) {
+	int rc = read_kw(ctx);
+	if (rc == NONE) {
 		ctx->error_msg = "Argument expected";
-		rc = -1;
+		rc = ERR;
 	}
 	return rc;
 }
 
 static int
-get_line(struct mbconfig_parser *ctx)
+expect_str(struct mbconfig_parser *ctx)
 {
-	int rc = get_str(ctx);
+	int rc = read_str(ctx);
+	if (rc == NONE) {
+		ctx->error_msg = "Argument expected";
+		rc = ERR;
+	}
+	return rc;
+}
+
+static int
+read_line(struct mbconfig_parser *ctx)
+{
+	int rc = read_str(ctx);
 	if (rc) {
 		ctx->error_msg = "Extra arguments";
-		return -1;
+		return ERR;
 	}
 
 	++ctx->lnum;
 	ctx->col = 0;
+	*ctx->buf = '\0';
+	ctx->arg = ctx->buf;
 
 	/* BANANA: fgets() == fucking gets(). Actually you do not need to
 	 * terminate lines with \n, it is also good if you pad it with spaces
 	 * to 1023 characters. */
-	if (!fgets(ctx->buf, sizeof ctx->buf, ctx->stream)) {
-		*ctx->buf = '\0';
+	if (fgets(ctx->buf, sizeof ctx->buf, ctx->stream) == NULL) {
 		if (ferror(ctx->stream)) {
 			ctx->error_msg = strerror(EIO);
-			return -1;
+			return ERR;
 		}
-		return 0;
+		return NONE;
 	}
 
-	return 1;
-}
-
-static int
-get_cmd(struct mbconfig_parser *ctx)
-{
-	int rc = get_line(ctx);
-	if (rc <= 0)
-		return rc;
-	return get_kw(ctx);
-}
-
-static void
-dup_arg(struct mbconfig_parser *ctx, char **data)
-{
-	free(*data);
-	if ((*data = malloc(ctx->argsz + 1 /* NUL */)) == NULL)
-		abort();
-
-	memcpy(*data, ctx->buf, ctx->argsz);
-	(*data)[ctx->argsz] = '\0';
+	return OK;
 }
 
 static int
 parse_str(struct mbconfig_parser *ctx, char **data)
 {
-	int rc = want_str(ctx);
-	if (rc <= 0)
-		return rc;
-	dup_arg(ctx, data);
-	return 1;
+	int rc = expect_str(ctx);
+	if (rc == OK) {
+		free(*data);
+		*data = strdup(ctx->arg);
+		if (*data == NULL)
+			abort();
+	}
+	return rc;
 }
 
 static int
 parse_int(struct mbconfig_parser *ctx, int *data)
 {
-	int rc = want_str(ctx);
-	if (rc < 0)
+	int rc = expect_str(ctx);
+	if (rc != OK)
 		return rc;
-	else if (!rc)
-		goto invalid;
 
 	char *end;
 	errno = 0;
-	*data = strtol(ctx->buf, &end, 10);
-	if (errno) {
-	invalid:;
+	*data = strtol(ctx->arg, &end, 10);
+	if (ctx->arg == end || errno) {
 		ctx->error_msg = "Invalid number";
-		return -1;
-	} else if (*end) {
+		return ERR;
+	} else if (*end != '\0') {
 		ctx->error_msg = "Junk after number";
-		return -1;
+		return ERR;
 	}
-	return 1;
+
+	return OK;
 }
 
 static int
 parse_path(struct mbconfig_parser *ctx, char **data)
 {
-	int rc = want_str(ctx);
-	if (rc <= 0)
+	int rc = expect_str(ctx);
+	if (rc != OK)
 		return rc;
 
-	char *s = ctx->buf;
-	if (*s == '~') {
-		++s;
+	free(*data);
 
-		char *slash = strchr(s, '/');
-		if (!slash)
-			slash = s + strlen(s);
+	char *s = ctx->arg;
+	if (*s == '~') {
+		s += 1;
+
+		char *slash = s + strcspn(s, "/");
 
 		struct passwd *pw;
 		if (s == slash) {
@@ -215,23 +216,25 @@ parse_path(struct mbconfig_parser *ctx, char **data)
 		}
 
 		int n = snprintf(NULL, 0, "%s%s", pw->pw_dir, slash);
-		free(*data);
-		if ((*data = malloc(n + 1 /* NUL */)) == NULL)
+		*data = malloc(n + 1 /* NUL */);
+		if (*data == NULL)
 			abort();
 		sprintf(*data, "%s%s", pw->pw_dir, slash);
-		return 1;
 	} else {
-		dup_arg(ctx, data);
-		return 1;
+		*data = strdup(s);
+		if (*data == NULL)
+			abort();
 	}
+
+	return OK;
 }
 
 static int
 parse_bool(struct mbconfig_parser *ctx, int *data)
 {
-	int rc = get_kw(ctx);
-	if (rc <= 0)
-		return rc;
+	int rc = expect_kw(ctx);
+	if (rc == ERR)
+		return ERR;
 
 	if (ISARG("YES") || ISARG("TRUE") || ISARG("ON") || ISARG("1")) {
 		*data = 1;
@@ -239,31 +242,37 @@ parse_bool(struct mbconfig_parser *ctx, int *data)
 		*data = 0;
 	} else {
 		ctx->error_msg = "Invalid boolean value";
-		return -1;
+		return ERR;
 	}
 
-	return 1;
+	return OK;
 }
 
 static int
 parse_store(struct mbconfig_parser *ctx, struct mbconfig_store *data)
 {
-	int rc = get_arg(ctx, ':', 0);
-	if (rc <= 0)
-		return rc;
-	if (ctx->argsz)
-		goto bad_format;
+	if (expect_str(ctx) == ERR)
+		return ERR;
 
-	rc = get_arg(ctx, ':', 0);
-	if (rc <= 0)
-		goto bad_format;
+	if (*ctx->arg != ':') {
+		ctx->error_msg = "Expected ':' before store name";
+		return ERR;
+	}
+	ctx->arg += 1;
 
-	char const *store = ctx->buf;
+	char const *store = ctx->arg;
+
+	char *sep = strchr(ctx->arg, ':');
+	if (sep == NULL) {
+		ctx->error_msg = "Expected ':' after store name";
+		return ERR;
+	}
+	*sep = '\0';
 
 	do {
 		struct mbconfig_imap_store *imap_store;
 		SLIST_FOREACH(imap_store, &ctx->config->imap_stores, link)
-			if (!strcmp(store, imap_store->name))
+			if (strcmp(store, imap_store->name) == 0)
 				break;
 		if (imap_store) {
 			data->type = MBCONFIG_STORE_IMAP;
@@ -273,7 +282,7 @@ parse_store(struct mbconfig_parser *ctx, struct mbconfig_store *data)
 
 		struct mbconfig_maildir_store *maildir_store;
 		SLIST_FOREACH(maildir_store, &ctx->config->maildir_stores, link)
-			if (!strcmp(store, maildir_store->name))
+			if (strcmp(store, maildir_store->name) == 0)
 				break;
 		if (maildir_store) {
 			data->type = MBCONFIG_STORE_MAILDIR;
@@ -282,38 +291,33 @@ parse_store(struct mbconfig_parser *ctx, struct mbconfig_store *data)
 		}
 
 		ctx->error_msg = "No such IMAPStore or MaildirStore";
-		return -1;
+		return ERR;
 	} while (0);
 
-	rc = get_str(ctx);
-	if (rc < 0) {
-		return rc;
-	} else if (!rc) {
-		data->mailbox = NULL;
-		return 1;
-	} else {
-		dup_arg(ctx, &data->mailbox);
-		return 1;
-	}
+	free(data->mailbox);
+	data->mailbox = strdup(sep + 1);
+	if (data->mailbox == NULL)
+		abort();
 
-bad_format:
-	ctx->error_msg = "Bad format";
-	return -1;
+	return OK;
 }
 
 static int
-parse_str_list(struct mbconfig_parser *ctx, struct mbconfig_str_list *data)
+parse_patterns(struct mbconfig_parser *ctx, struct mbconfig_str_list *data)
 {
 	/* We barely care about memory leaks. */
 	SLIST_INIT(data);
 
 	int rc;
-	while (0 < (rc = get_str(ctx))) {
+	while (0 < (rc = read_str(ctx))) {
 		struct mbconfig_str *pattern = calloc(1, sizeof *pattern);
 		if (pattern == NULL)
 			abort();
 
-		dup_arg(ctx, &pattern->str);
+		pattern->str = strdup(ctx->arg);
+		if (pattern->str == NULL)
+			abort();
+
 		/* Note that patterns are in reverse order. */
 		SLIST_INSERT_HEAD(data, pattern, link);
 	}
@@ -329,7 +333,7 @@ preprocess_cmd(struct mbconfig_parser *ctx, int global)
 	struct mbconfig_mbidled_channel *c = &ctx->channel_config[global];
 
 	if (ISARG(MBIDLED_CMD_PREFIX "STRICTPROPAGATE")) {
-		if ((rc = get_kw(ctx)) != 1)
+		if ((rc = expect_kw(ctx)) != OK)
 			return rc;
 		if (ISARG("NONE")) {
 			c->strict_propagate = 0;
@@ -343,17 +347,14 @@ preprocess_cmd(struct mbconfig_parser *ctx, int global)
 				MBCONFIG_PROPAGATE_FAR;
 		} else {
 			ctx->error_msg = "Unknown argument";
-			return -1;
+			return ERR;
 		}
 	} else if (ISARG(MBIDLED_CMD_PREFIX "STARTTIMEOUT")) {
 		rc = parse_int(ctx, &c->start_timeout);
 	} else if (ISARG(MBIDLED_CMD_PREFIX "STARTINTERVAL")) {
 		rc = parse_int(ctx, &c->start_interval);
 	} else if (ISPREFIXARG(MBIDLED_CMD_PREFIX)) {
-		/* Drop command prefix. */
-		int const l = sizeof MBIDLED_CMD_PREFIX - 1;
-		ctx->argsz -= l;
-		memmove(ctx->buf, ctx->buf + l, ctx->argsz + 1 /* NUL */);
+		ctx->arg += strlen(MBIDLED_CMD_PREFIX);
 	}
 
 	if (global)
@@ -396,28 +397,23 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 			rc = parse_str(ctx, &data->tunnel_cmd);
 		} else if (ISARG("AUTHMECHS")) {
 			data->login_auth = 0;
-			while (0 < (rc = get_kw(ctx)))
+			while ((rc = read_kw(ctx)) == OK)
 				data->login_auth |= ISARG("*") || ISARG("LOGIN");
-			if (0 <= rc)
-				rc = 1;
 		} else if (ISARG("TLSTYPE") || ISARG("SSLTYPE")) {
-			if (!(rc = get_kw(ctx))) {
+			if ((rc = expect_kw(ctx)) != OK)
 				continue;
-			} else if (rc < 0) {
-				break;
-			}
 			if (ISARG("NONE")) {
 				data->ssl = MBCONFIG_SSL_NONE;
 			} else if (ISARG("IMAPS")) {
 				data->ssl = MBCONFIG_SSL_IMAPS;
 			} else {
 				ctx->error_msg = "Unknown argument";
-				return -1;
+				return ERR;
 			}
 		} else if (ISARG("TLSVERSIONS")) {
-			while (0 < (rc = get_kw(ctx))) {
-				int op = *ctx->buf;
-				memmove(ctx->buf, ctx->buf + 1, ctx->argsz-- + 1 /* NUL */);
+			while ((rc = read_kw(ctx)) == OK) {
+				int op = *ctx->arg;
+				ctx->arg += 1;
 
 				int version;
 				if (ISARG("1.0")) {
@@ -430,7 +426,7 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 					version = SSL_OP_NO_TLSv1_3;
 				} else {
 					ctx->error_msg = "Unrecognized TLS version";
-					return -1;
+					return ERR;
 				}
 
 				if (op == '-') {
@@ -439,11 +435,9 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 					data->ssl_versions &= ~version;
 				} else {
 					ctx->error_msg = "+ OR - expected";
-					return -1;
+					return ERR;
 				}
 			}
-			if (0 <= rc)
-				rc = 1;
 		} else if (ISARG("SSLVERSIONS")) {
 #define ARGS \
 	/* xmacro(name, op) */ \
@@ -456,15 +450,13 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 #define xmacro(name, op) | op
 			data->ssl_versions = 0 ARGS;
 #undef xmacro
-			while (0 < (rc = get_kw(ctx))) {
+			while ((rc = read_kw(ctx)) == OK) {
 				if (0) (void)0;
 #define xmacro(name, op) else if (ISARG(name)) data->ssl_versions &= ~(op);
 				ARGS
 #undef xmacro
 			}
 #undef ARGS
-			if (0 <= rc)
-				rc = 1;
 		} else if (ISARG("SYSTEMCERTIFICATES")) {
 			rc = parse_bool(ctx, &data->system_certs);
 		} else if (ISARG("CERTIFICATEFILE")) {
@@ -476,25 +468,25 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 		}
 	}
 
-	if (rc < 0)
-		return rc;
+	if (rc == ERR)
+		return ERR;
 
-	if (!data->user && !data->user_cmd) {
+	if (data->user == NULL && data->user_cmd == NULL) {
 		ctx->error_msg = "Neither User nor UserCmd present";
-		return -1;
+		return ERR;
 	}
 
-	if (!data->pass && !data->pass_cmd) {
+	if (data->pass == NULL && data->pass_cmd == NULL) {
 		ctx->error_msg = "Neither Pass nor PassCmd present";
-		return -1;
+		return ERR;
 	}
 
-	if (!data->host && !data->tunnel_cmd) {
+	if (data->host == NULL && data->tunnel_cmd == NULL) {
 		ctx->error_msg = "Neither Host nor Tunnel present";
-		return -1;
+		return ERR;
 	}
 
-	return rc;
+	return OK;
 }
 
 static int
@@ -504,15 +496,15 @@ parse_imap_store_section(struct mbconfig_parser *ctx)
 
 	SECTION_FOREACH {
 		if (ISARG("ACCOUNT")) {
-			if ((rc = want_str(ctx)) <= 0)
+			if ((rc = expect_str(ctx)) <= 0)
 				break;
 			struct mbconfig_imap_account *account;
 			SLIST_FOREACH(account, &ctx->config->imap_accounts, link)
-				if (!strcmp(ctx->buf, account->name))
+				if (strcmp(ctx->arg, account->name) == 0)
 					break;
-			if (!account) {
+			if (account == NULL) {
 				ctx->error_msg = "No such IMAPAccount";
-				return -1;
+				return ERR;
 			}
 			data->account = account;
 		} else {
@@ -520,9 +512,9 @@ parse_imap_store_section(struct mbconfig_parser *ctx)
 		}
 	}
 
-	if (0 <= rc && !data->account) {
+	if (0 <= rc && data->account == NULL) {
 		ctx->error_msg = "Missing required Account";
-		return -1;
+		return ERR;
 	}
 
 	return rc;
@@ -542,9 +534,9 @@ parse_maildir_store_section(struct mbconfig_parser *ctx)
 			skip_unknown_cmd(ctx);
 	}
 
-	if (0 <= rc && !data->path) {
+	if (0 <= rc && data->path == NULL) {
 		ctx->error_msg = "Missing required Path";
-		return -1;
+		return ERR;
 	}
 
 	return rc;
@@ -563,10 +555,10 @@ parse_channel_section(struct mbconfig_parser *ctx)
 		} else if (ISARG("NEAR")) {
 			rc = parse_store(ctx, &data->near);
 		} else if (ISARG("PATTERN") || ISARG("PATTERNS")) {
-			rc = parse_str_list(ctx, &data->patterns);
+			rc = parse_patterns(ctx, &data->patterns);
 		} else if (ISARG("SYNC")) {
 			data->sync = 0;
-			while (0 < (rc = get_kw(ctx))) {
+			while ((rc = read_kw(ctx)) == OK) {
 				if (ISARG("NONE"))
 					/* Nop. */;
 				else if (ISPREFIXARG("PULL"))
@@ -579,29 +571,27 @@ parse_channel_section(struct mbconfig_parser *ctx)
 						MBCONFIG_SYNC_PULL |
 						MBCONFIG_SYNC_PUSH;
 			}
-			if (0 <= rc)
-				rc = 1;
 		} else {
 			skip_unknown_cmd(ctx);
 		}
 	}
 
-	if (rc < 0)
+	if (rc == ERR)
 		return rc;
 
-	if (!data->near.store) {
+	if (data->near.store == NULL) {
 		ctx->error_msg = "Missing required Near";
-		return -1;
+		return ERR;
 	}
 
-	if (!data->far.store) {
+	if (data->far.store == NULL) {
 		ctx->error_msg = "Missing required Far";
-		return -1;
+		return ERR;
 	}
 
 	memcpy(&data->mbidled, &ctx->channel_config[0], sizeof data->mbidled);
 
-	return rc;
+	return OK;
 }
 
 int
@@ -629,25 +619,22 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 		abort();
 
 	ctx->stream = fopen(filename, "r");
-	if (!ctx->stream) {
+	if (ctx->stream == NULL) {
 		free(config->filename);
 		ctx->error_msg = strerror(errno);
-		return -1;
+		return ERR;
 	}
 
-	*ctx->buf = 0;
 	ctx->col = 0;
+	*ctx->buf = '\0';
+	ctx->arg = ctx->buf;
 
-	int rc = 0;
-	while (0 <= rc && 0 < (rc = get_line(ctx))) {
-		rc = get_kw(ctx);
-		if (rc < 0)
-			break;
-		else if (!rc)
-			continue;
-		rc = preprocess_cmd(ctx, 1);
-		if (rc < 0)
-			break;
+	int rc = NONE;
+	while (rc != ERR &&
+	       (rc = read_line(ctx)) == OK &&
+	       (rc = read_kw(ctx)) != ERR &&
+	       (rc = preprocess_cmd(ctx, 1)) == OK)
+	{
 		if (ISARG("IMAPACCOUNT"))
 			rc = parse_imap_account_section(ctx);
 		else if (ISARG("IMAPSTORE"))
@@ -661,27 +648,27 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 	}
 
 	fclose(ctx->stream);
-	return rc;
+	return rc == ERR ? -1 : 0;
 }
 
 void
 mbconfig_eval_cmd_option(char **option, char const *option_cmd)
 {
-	if (*option)
+	if (*option != NULL)
 		return;
 
 	char buf[8192];
 
 	option_cmd += *option_cmd == '+';
 	FILE *stream = popen(option_cmd, "r");
-	if (!stream)
+	if (stream == NULL)
 		return;
 	char *ok = fgets(buf, sizeof buf, stream);
 	pclose(stream);
-	if (!ok)
+	if (ok == NULL)
 		return;
 	char *s = strchr(buf, '\n');
-	if (s)
+	if (s != NULL)
 		*s = '\0';
 	*option = strdup(buf);
 }
@@ -704,7 +691,7 @@ match_pattern(char const *pat, char const *s)
 			match_pattern(pat + 1, s);
 	} else if (*pat == *s) {
 		/* Accept. */
-		if (!*s)
+		if (*s == '\0')
 			return 1;
 
 		/* Next. */

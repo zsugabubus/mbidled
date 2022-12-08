@@ -92,7 +92,8 @@ struct mbconfig_parser {
 	FILE *stream;
 	int lnum;
 	char buf[1024];
-	unsigned short argsz, col;
+	int col;
+	char *arg;
 	char const *error_msg;
 	struct mbconfig *config;
 	struct mbconfig_mbidled_channel channel_config[2];

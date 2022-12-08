@@ -42,10 +42,6 @@ read_arg(struct mbconfig_parser *ctx, int caseless)
 		char const *s = ctx->buf + ctx->col;
 		if (*s == '\0')
 			return NONE;
-		if (strncmp(MBIDLED_CMD_PREFIX, s, sizeof MBIDLED_CMD_PREFIX - 1) == 0)
-			break;
-		if (*s == '#')
-			return NONE;
 		if (isspace(*s))
 			continue;
 		break;
@@ -137,21 +133,23 @@ read_line(struct mbconfig_parser *ctx)
 		return ERR;
 	}
 
-	++ctx->lnum;
-	ctx->col = 0;
-	*ctx->buf = '\0';
-	ctx->arg = ctx->buf;
+	do {
+		ctx->lnum += 1;
+		ctx->col = 0;
+		*ctx->buf = '\0';
+		ctx->arg = ctx->buf;
 
-	/* BANANA: fgets() == fucking gets(). Actually you do not need to
-	 * terminate lines with \n, it is also good if you pad it with spaces
-	 * to 1023 characters. */
-	if (fgets(ctx->buf, sizeof ctx->buf, ctx->stream) == NULL) {
-		if (ferror(ctx->stream)) {
-			ctx->error_msg = strerror(EIO);
-			return ERR;
+		if (fgets(ctx->buf, sizeof ctx->buf, ctx->stream) == NULL) {
+			if (ferror(ctx->stream)) {
+				ctx->error_msg = "I/O error";
+				return ERR;
+			}
+			return NONE;
 		}
-		return NONE;
-	}
+
+		if (strncmp(MBIDLED_CMD_PREFIX, ctx->buf, strlen(MBIDLED_CMD_PREFIX)) == 0)
+			break;
+	} while (*ctx->buf == '#');
 
 	return OK;
 }

@@ -686,7 +686,7 @@ mbconfig_eval_cmd_option(char **option, char const *option_cmd)
 	*option = strdup(buf);
 }
 
-int
+static int
 match_pattern(char const *pat, char const *s)
 {
 	if (*pat == '*') {

@@ -23,14 +23,19 @@ struct imap_store {
 	ev_timer timeout_watcher;
 	ev_io io_watcher;
 
-	enum {
+	enum state {
 		STATE_GROUND,
 		STATE_CONNECTING,
 		STATE_CONNECTED,
 		STATE_CONNECTING_SSL,
 		STATE_ESTABLISHED_SSL,
 		STATE_ESTABLISHED,
-		STATE_IMAP,
+		STATE_IMAP_GROUND,
+		STATE_IMAP_CAPABILITY,
+		STATE_IMAP_LOGIN,
+		STATE_IMAP_LIST,
+		STATE_IMAP_EXAMINE,
+		STATE_IMAP_IDLE,
 		STATE_DISCONNECTED,
 		STATE_ERROR,
 		STATE_RESET,
@@ -41,15 +46,7 @@ struct imap_store {
 	} cap;
 	BIO *bio;
 
-	enum cmd {
-		CMD_NONE,
-		CMD_CAPABILITY,
-		CMD_LOGIN,
-		CMD_LIST,
-		CMD_EXAMINE,
-		CMD_IDLE,
-	} cmd;
-	int cmd_tag;
+	int expected_tag;
 	int seq_num;
 };
 
@@ -128,7 +125,7 @@ imap_open_store(struct channel *chan, struct mbconfig_store *mb_store)
 }
 
 static void
-write_cmdf(struct imap_store *store, enum cmd cmd, char const *fmt, ...)
+write_cmdf(struct imap_store *store, enum state next_state, char const *fmt, ...)
 {
 	++store->seq_num;
 
@@ -177,8 +174,8 @@ write_cmdf(struct imap_store *store, enum cmd cmd, char const *fmt, ...)
 
 	BIO_write(store->bio, "\r\n", 2);
 
-	store->cmd = cmd;
-	store->cmd_tag = store->seq_num;
+	store->state = next_state;
+	store->expected_tag = store->seq_num;
 }
 
 static void
@@ -193,19 +190,19 @@ feed(struct imap_store *store, char *line)
 {
 	imap_log(store, LOG_DEBUG, "S: %s", line);
 
-	if (*line == '*' || *line == '+') switch (store->cmd) {
-	case CMD_NONE:
+	if (*line == '*' || *line == '+') switch (store->state) {
+	case STATE_IMAP_GROUND:
 		if (strncmp(line, "* OK ", 5)) {
 			imap_log(store, LOG_ERR, "OK expected");
 			store->state = STATE_ERROR;
 			return;
 		}
 
-		write_cmdf(store, CMD_CAPABILITY,
+		write_cmdf(store, STATE_IMAP_CAPABILITY,
 				"CAPABILITY");
 		return;
 
-	case CMD_CAPABILITY:
+	case STATE_IMAP_CAPABILITY:
 		if (strncmp(line, "* CAPABILITY ", 13))
 			return; /* Ignore. */
 		line += 12;
@@ -217,7 +214,7 @@ feed(struct imap_store *store, char *line)
 			store->cap |= CAP_LOGINDISABLED;
 		return;
 
-	case CMD_LIST:
+	case STATE_IMAP_LIST:
 		if (strncmp(line, "* LIST ", 7))
 			return; /* Ignore. */
 		line += 7;
@@ -233,7 +230,7 @@ feed(struct imap_store *store, char *line)
 
 		return;
 
-	case CMD_IDLE:
+	case STATE_IMAP_IDLE:
 		if (!('0' <= line[2] && line[2] <= '9'))
 			return; /* Ignore. */
 
@@ -246,7 +243,7 @@ feed(struct imap_store *store, char *line)
 	}
 
 	int line_tag = strtol(line, &line, 10);
-	if (line_tag != store->cmd_tag) {
+	if (line_tag != store->expected_tag) {
 		imap_log(store, LOG_ERR, "Received response with unknown tag %d", line_tag);
 		return;
 	}
@@ -257,8 +254,8 @@ feed(struct imap_store *store, char *line)
 		return;
 	}
 
-	switch (store->cmd) {
-	case CMD_CAPABILITY:
+	switch (store->state) {
+	case STATE_IMAP_CAPABILITY:
 		if (!(store->cap & CAP_IDLE)) {
 			imap_log(store, LOG_ERR, "IDLE not supported");
 			store->state = STATE_ERROR;
@@ -290,26 +287,26 @@ feed(struct imap_store *store, char *line)
 			return;
 		}
 
-		write_cmdf(store, CMD_LOGIN,
+		write_cmdf(store, STATE_IMAP_LOGIN,
 				"LOGIN \"%q\" \"%q\"",
 				mb_account->user,
 				mb_account->pass);
 		break;
 
-	case CMD_LOGIN:
+	case STATE_IMAP_LOGIN:
 		imap_log(store, LOG_NOTICE, "Logged in");
 
 		if (store->list_mailboxes) {
-			write_cmdf(store, CMD_LIST,
+			write_cmdf(store, STATE_IMAP_LIST,
 					"LIST \"%q\" \"%q\"",
 					NAMESPACE,
 					"*");
 			break;
-		case CMD_LIST:
+		case STATE_IMAP_LIST:
 			store->list_mailboxes = 0;
 		}
 
-		write_cmdf(store, CMD_EXAMINE,
+		write_cmdf(store, STATE_IMAP_EXAMINE,
 				"EXAMINE \"%q%q\"",
 				!strcmp(store->mailbox, "INBOX")
 					? ""
@@ -317,8 +314,8 @@ feed(struct imap_store *store, char *line)
 				store->mailbox);
 		break;
 
-	case CMD_EXAMINE:
-		write_cmdf(store, CMD_IDLE,
+	case STATE_IMAP_EXAMINE:
+		write_cmdf(store, STATE_IMAP_IDLE,
 				"IDLE");
 
 		/* Bring other side up-to-date. */
@@ -438,8 +435,7 @@ do_poll(struct imap_store *store)
 
 	for (int rc;;) switch (store->state) {
 	case STATE_GROUND:
-		store->cmd = CMD_NONE;
-		store->cmd_tag = 0;
+		store->expected_tag = 0;
 		store->seq_num = 0;
 
 		store->bio = create_transport(store);
@@ -533,22 +529,7 @@ do_poll(struct imap_store *store)
 
 	case STATE_ESTABLISHED:
 		imap_log(store, LOG_DEBUG, "Connection established");
-		store->state = STATE_IMAP;
-		break;
-
-	case STATE_IMAP:
-	{
-		char line[4096];
-		rc = BIO_gets(store->bio, line, sizeof line);
-		if (2 <= rc) {
-			line[rc - 2] = '\0';
-			feed(store, line);
-		} else if (BIO_should_retry(store->bio)) {
-			return;
-		} else {
-			store->state = STATE_DISCONNECTED;
-		}
-	}
+		store->state = STATE_IMAP_GROUND;
 		break;
 
 	case STATE_DISCONNECTED:
@@ -573,5 +554,20 @@ do_poll(struct imap_store *store)
 		store->bio = NULL;
 		ev_io_stop(EV_A_ &store->io_watcher);
 		return;
+
+	default:
+	{
+		char line[4096];
+		rc = BIO_gets(store->bio, line, sizeof line);
+		if (2 <= rc) {
+			line[rc - 2] = '\0';
+			feed(store, line);
+		} else if (BIO_should_retry(store->bio)) {
+			return;
+		} else {
+			store->state = STATE_DISCONNECTED;
+		}
+	}
+		break;
 	}
 }

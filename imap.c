@@ -199,7 +199,7 @@ feed(struct imap_store *store, char *line)
 {
 	imap_log(store, LOG_DEBUG, "S: %s", line);
 
-	if (*line == '*' || *line == '+')
+	if (*line == '*' || *line == '+') {
 		switch (store->state) {
 		case STATE_IMAP_GROUND:
 			if (strncmp(line, "* OK ", 5)) {
@@ -252,6 +252,7 @@ feed(struct imap_store *store, char *line)
 			/* Ignore. */
 			return;
 		}
+	}
 
 	int line_tag = strtol(line, &line, 10);
 	if (line_tag != store->expected_tag) {
@@ -316,7 +317,8 @@ feed(struct imap_store *store, char *line)
 			mb_account->user,
 			mb_account->pass
 		);
-	} break;
+		break;
+	}
 
 	case STATE_IMAP_STARTTLS:
 		store->state = STATE_SSL_GROUND;
@@ -328,10 +330,10 @@ feed(struct imap_store *store, char *line)
 		if (store->list_mailboxes) {
 			write_cmdf(store, STATE_IMAP_LIST, "LIST \"%q\" \"%q\"", NAMESPACE, "*");
 			break;
-		case STATE_IMAP_LIST:
-			store->list_mailboxes = 0;
 		}
-
+		/* FALLTHROUGH */
+	case STATE_IMAP_LIST:
+		store->list_mailboxes = 0;
 		write_cmdf(
 			store,
 			STATE_IMAP_EXAMINE,
@@ -651,6 +653,7 @@ do_poll(struct imap_store *store)
 			} else {
 				store->state = STATE_DISCONNECTED;
 			}
-		} break;
+			break;
+		}
 		}
 }

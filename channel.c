@@ -88,7 +88,8 @@ channel_open(EV_P_ struct mbconfig *mb_config, struct mbconfig_channel *mb_chan)
 	ASSERT(chan = malloc(sizeof *chan));
 
 	chan->loop = loop;
-	chan->mb_config = mb_config, chan->mb_chan = mb_chan;
+	chan->mb_config = mb_config;
+	chan->mb_chan = mb_chan;
 	LIST_INIT(&chan->boxes);
 
 	if (MBCONFIG_SYNC_PUSH & mb_chan->sync)

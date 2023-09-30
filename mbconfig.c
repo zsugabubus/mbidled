@@ -704,11 +704,11 @@ mbconfig_patterns_test(struct mbconfig_str_list const *patterns, char const *s)
 
 	struct mbconfig_str *pattern;
 	SLIST_FOREACH (pattern, patterns, link) {
-		int not ;
+		int bang;
 		char const *pat = pattern->str;
-		pat += (not = (*pat == '!'));
+		pat += (bang = (*pat == '!'));
 		if (match_pattern(pat, s))
-			return !not ;
+			return !bang;
 	}
 
 	return 0;

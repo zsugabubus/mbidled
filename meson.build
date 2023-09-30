@@ -41,3 +41,10 @@ executable('mbidled',
 	install: true,
 )
 install_man('mbidled.1')
+
+test(
+	'lint',
+	find_program('make'),
+	workdir: meson.source_root(),
+	args: ['lint'],
+)

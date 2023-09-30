@@ -1,0 +1,17 @@
+AlignAfterOpenBracket: BlockIndent
+AlignEscapedNewlines: DontAlign
+AllowShortFunctionsOnASingleLine: None
+AlwaysBreakAfterReturnType: AllDefinitions
+BasedOnStyle: LLVM
+BinPackArguments: false
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterFunction: true
+BreakBeforeBraces: Custom
+BreakStringLiterals: false
+ColumnLimit: 100
+ContinuationIndentWidth: 8
+ForEachMacros: ['LIST_FOREACH', 'SLIST_FOREACH']
+IndentWidth: 8
+TabWidth: 8
+UseTab: Always

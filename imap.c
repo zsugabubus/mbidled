@@ -65,18 +65,24 @@ io_cb(EV_P_ ev_io *w, int revents)
 	(void)revents;
 	struct imap_store *store = container_of(w, struct imap_store, io_watcher);
 
-	if (revents & EV_READ)
-		do_poll(store);
+	do_poll(store);
 
-	if (!store->bio)
+	if (store->bio == NULL)
 		return;
 
 	BIO_flush(store->bio);
 
-	int new_events = EV_READ | (BIO_wpending(store->bio) ? EV_WRITE : 0);
-	if (new_events != ((EV_READ | EV_WRITE) & store->io_watcher.events)) {
+	int events = EV_READ;
+
+	if (BIO_wpending(store->bio))
+		events |= EV_WRITE;
+
+	if (BIO_should_retry(store->bio) && BIO_should_io_special(store->bio))
+		events |= EV_WRITE;
+
+	if (events != (store->io_watcher.events & (EV_READ | EV_WRITE))) {
 		ev_io_stop(EV_A_ &store->io_watcher);
-		ev_io_modify(&store->io_watcher, new_events);
+		ev_io_modify(&store->io_watcher, events);
 		ev_io_start(EV_A_ &store->io_watcher);
 	}
 }

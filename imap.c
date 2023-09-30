@@ -80,9 +80,9 @@ update_io_interest(EV_P_ struct imap_store *store)
 		events |= EV_WRITE;
 
 	if (events != (store->io_watcher.events & (EV_READ | EV_WRITE))) {
-		ev_io_stop(EV_A_ &store->io_watcher);
+		ev_io_stop(EV_A_ & store->io_watcher);
 		ev_io_modify(&store->io_watcher, events);
-		ev_io_start(EV_A_ &store->io_watcher);
+		ev_io_start(EV_A_ & store->io_watcher);
 	}
 }
 
@@ -97,8 +97,7 @@ timeout_cb(EV_P_ ev_timer *w, int revents)
 }
 
 static void
-imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
-		char const *mailbox)
+imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store, char const *mailbox)
 {
 	int inbox = !strcmp(mailbox, "INBOX");
 
@@ -200,59 +199,59 @@ feed(struct imap_store *store, char *line)
 {
 	imap_log(store, LOG_DEBUG, "S: %s", line);
 
-	if (*line == '*' || *line == '+') switch (store->state) {
-	case STATE_IMAP_GROUND:
-		if (strncmp(line, "* OK ", 5)) {
-			imap_log(store, LOG_ERR, "OK expected");
-			store->state = STATE_ERROR;
+	if (*line == '*' || *line == '+')
+		switch (store->state) {
+		case STATE_IMAP_GROUND:
+			if (strncmp(line, "* OK ", 5)) {
+				imap_log(store, LOG_ERR, "OK expected");
+				store->state = STATE_ERROR;
+				return;
+			}
+
+			write_cmdf(store, STATE_IMAP_CAPABILITY, "CAPABILITY");
+			return;
+
+		case STATE_IMAP_CAPABILITY:
+			if (strncmp(line, "* CAPABILITY ", 13))
+				return; /* Ignore. */
+			line += 12;
+
+			store->cap = 0;
+			if (strstr(line, " IDLE"))
+				store->cap |= CAP_IDLE;
+			if (strstr(line, " LOGINDISABLED"))
+				store->cap |= CAP_LOGINDISABLED;
+			if (strstr(line, " STARTTLS"))
+				store->cap |= CAP_STARTTLS;
+			return;
+
+		case STATE_IMAP_LIST:
+			if (strncmp(line, "* LIST ", 7))
+				return; /* Ignore. */
+			line += 7;
+
+			{
+				/* Simple and stupid. */
+				char const *mailbox = strstr(line, NAMESPACE);
+				if (mailbox) {
+					mailbox += sizeof NAMESPACE - 1;
+					imap_open_mailbox(store->chan, store->mb_store, mailbox);
+				}
+			}
+
+			return;
+
+		case STATE_IMAP_IDLE:
+			if (!('0' <= line[2] && line[2] <= '9'))
+				return; /* Ignore. */
+
+			imap_notify_change(store);
+			return;
+
+		default:
+			/* Ignore. */
 			return;
 		}
-
-		write_cmdf(store, STATE_IMAP_CAPABILITY,
-				"CAPABILITY");
-		return;
-
-	case STATE_IMAP_CAPABILITY:
-		if (strncmp(line, "* CAPABILITY ", 13))
-			return; /* Ignore. */
-		line += 12;
-
-		store->cap = 0;
-		if (strstr(line, " IDLE"))
-			store->cap |= CAP_IDLE;
-		if (strstr(line, " LOGINDISABLED"))
-			store->cap |= CAP_LOGINDISABLED;
-		if (strstr(line, " STARTTLS"))
-			store->cap |= CAP_STARTTLS;
-		return;
-
-	case STATE_IMAP_LIST:
-		if (strncmp(line, "* LIST ", 7))
-			return; /* Ignore. */
-		line += 7;
-
-	{
-		/* Simple and stupid. */
-		char const *mailbox = strstr(line, NAMESPACE);
-		if (mailbox) {
-			mailbox += sizeof NAMESPACE - 1;
-			imap_open_mailbox(store->chan, store->mb_store, mailbox);
-		}
-	}
-
-		return;
-
-	case STATE_IMAP_IDLE:
-		if (!('0' <= line[2] && line[2] <= '9'))
-			return; /* Ignore. */
-
-		imap_notify_change(store);
-		return;
-
-	default:
-		/* Ignore. */
-		return;
-	}
 
 	int line_tag = strtol(line, &line, 10);
 	if (line_tag != store->expected_tag) {
@@ -269,8 +268,7 @@ feed(struct imap_store *store, char *line)
 	switch (store->state) {
 	case STATE_IMAP_CAPABILITY:
 	{
-		struct mbconfig_imap_account *mb_account =
-			store->mb_store->imap_store->account;
+		struct mbconfig_imap_account *mb_account = store->mb_store->imap_store->account;
 
 		if (!(store->cap & CAP_IDLE)) {
 			imap_log(store, LOG_ERR, "IDLE not supported");
@@ -311,12 +309,14 @@ feed(struct imap_store *store, char *line)
 			return;
 		}
 
-		write_cmdf(store, STATE_IMAP_LOGIN,
-				"LOGIN \"%q\" \"%q\"",
-				mb_account->user,
-				mb_account->pass);
-	}
-		break;
+		write_cmdf(
+			store,
+			STATE_IMAP_LOGIN,
+			"LOGIN \"%q\" \"%q\"",
+			mb_account->user,
+			mb_account->pass
+		);
+	} break;
 
 	case STATE_IMAP_STARTTLS:
 		store->state = STATE_SSL_GROUND;
@@ -326,26 +326,23 @@ feed(struct imap_store *store, char *line)
 		imap_log(store, LOG_NOTICE, "Logged in");
 
 		if (store->list_mailboxes) {
-			write_cmdf(store, STATE_IMAP_LIST,
-					"LIST \"%q\" \"%q\"",
-					NAMESPACE,
-					"*");
+			write_cmdf(store, STATE_IMAP_LIST, "LIST \"%q\" \"%q\"", NAMESPACE, "*");
 			break;
 		case STATE_IMAP_LIST:
 			store->list_mailboxes = 0;
 		}
 
-		write_cmdf(store, STATE_IMAP_EXAMINE,
-				"EXAMINE \"%q%q\"",
-				!strcmp(store->mailbox, "INBOX")
-					? ""
-					: NAMESPACE,
-				store->mailbox);
+		write_cmdf(
+			store,
+			STATE_IMAP_EXAMINE,
+			"EXAMINE \"%q%q\"",
+			!strcmp(store->mailbox, "INBOX") ? "" : NAMESPACE,
+			store->mailbox
+		);
 		break;
 
 	case STATE_IMAP_EXAMINE:
-		write_cmdf(store, STATE_IMAP_IDLE,
-				"IDLE");
+		write_cmdf(store, STATE_IMAP_IDLE, "IDLE");
 
 		/* Bring other side up-to-date. */
 		imap_notify_change(store);
@@ -368,19 +365,16 @@ create_source_bio(struct imap_store const *store)
 static BIO *
 create_ssl_bio(struct imap_store const *store)
 {
-	struct mbconfig_imap_account const *mb_account =
-		store->mb_store->imap_store->account;
+	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
 
 	SSL_CTX *ctx = NULL;
 	BIO *bio = NULL;
 
 	if ((ctx = SSL_CTX_new(TLS_client_method())) == NULL ||
-	    (mb_account->system_certs &&
-	     SSL_CTX_set_default_verify_paths(ctx) != 1) ||
+	    (mb_account->system_certs && SSL_CTX_set_default_verify_paths(ctx) != 1) ||
 	    (mb_account->cert_file != NULL &&
-	     X509_STORE_load_locations(
-			SSL_CTX_get_cert_store(ctx),
-			mb_account->cert_file, NULL) != 1))
+	     X509_STORE_load_locations(SSL_CTX_get_cert_store(ctx), mb_account->cert_file, NULL) !=
+		     1))
 		goto fail;
 
 	/* Continue handshake even if certificate seems invalid.
@@ -390,20 +384,17 @@ create_ssl_bio(struct imap_store const *store)
 	SSL_CTX_set_options(ctx, mb_account->ssl_versions);
 
 	SSL *ssl = NULL;
-	if ((bio = BIO_new_ssl(ctx, 1 /* Client. */)) == NULL ||
-	    BIO_get_ssl(bio, &ssl) != 1 ||
-	    (mb_account->host != NULL &&
-	     SSL_set1_host(ssl, mb_account->host) != 1) ||
-	    (mb_account->ciphers != NULL &&
-	     SSL_set_cipher_list(ssl, mb_account->ciphers) != 1) ||
-	    (mb_account->host != NULL &&
-	     SSL_set_tlsext_host_name(ssl, mb_account->host) != 1))
+	if ((bio = BIO_new_ssl(ctx, 1 /* Client. */)) == NULL || BIO_get_ssl(bio, &ssl) != 1 ||
+	    (mb_account->host != NULL && SSL_set1_host(ssl, mb_account->host) != 1) ||
+	    (mb_account->ciphers != NULL && SSL_set_cipher_list(ssl, mb_account->ciphers) != 1) ||
+	    (mb_account->host != NULL && SSL_set_tlsext_host_name(ssl, mb_account->host) != 1))
 		goto fail;
 
-	SSL_set_mode(ssl,
-			SSL_MODE_AUTO_RETRY |
-			SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
-			SSL_MODE_ENABLE_PARTIAL_WRITE);
+	SSL_set_mode(
+		ssl,
+		SSL_MODE_AUTO_RETRY | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+			SSL_MODE_ENABLE_PARTIAL_WRITE
+	);
 
 	SSL_CTX_free(ctx);
 	return bio;
@@ -425,8 +416,7 @@ create_tunnel_bio(struct imap_store const *store, char const *cmd)
 		goto fail;
 
 	if (!fork()) {
-		if (dup2(pair[0], STDIN_FILENO) < 0 ||
-		    dup2(pair[0], STDOUT_FILENO) < 0 ||
+		if (dup2(pair[0], STDIN_FILENO) < 0 || dup2(pair[0], STDOUT_FILENO) < 0 ||
 		    execl("/bin/sh", "sh", "-c", cmd, NULL) < 0)
 			imap_log(store, LOG_ERR, "exec() failed: %s", strerror(errno));
 		_exit(EXIT_FAILURE);
@@ -434,8 +424,7 @@ create_tunnel_bio(struct imap_store const *store, char const *cmd)
 
 	close(pair[0]);
 
-	if ((bio = BIO_new_fd(pair[1], 1 /* Close. */)) == NULL ||
-	    BIO_set_nbio(bio, 1) != 1)
+	if ((bio = BIO_new_fd(pair[1], 1 /* Close. */)) == NULL || BIO_set_nbio(bio, 1) != 1)
 		goto fail;
 
 	return bio;
@@ -448,8 +437,7 @@ fail:
 static BIO *
 create_connect_bio(struct imap_store const *store)
 {
-	struct mbconfig_imap_account const *mb_account =
-		store->mb_store->imap_store->account;
+	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
 
 	BIO *bio = NULL;
 
@@ -461,10 +449,8 @@ create_connect_bio(struct imap_store const *store)
 			port = "143";
 	}
 
-	if ((bio = BIO_new(BIO_s_connect())) == NULL ||
-	    BIO_set_nbio(bio, 1) != 1 ||
-	    BIO_set_conn_hostname(bio, mb_account->host) != 1 ||
-	    BIO_set_conn_port(bio, port) != 1)
+	if ((bio = BIO_new(BIO_s_connect())) == NULL || BIO_set_nbio(bio, 1) != 1 ||
+	    BIO_set_conn_hostname(bio, mb_account->host) != 1 || BIO_set_conn_port(bio, port) != 1)
 		goto fail;
 
 	return bio;
@@ -477,8 +463,7 @@ fail:
 static BIO *
 create_sink_bio(struct imap_store *store)
 {
-	struct mbconfig_imap_account const *mb_account =
-		store->mb_store->imap_store->account;
+	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
 
 	if (mb_account->tunnel_cmd != NULL)
 		return create_tunnel_bio(store, mb_account->tunnel_cmd);
@@ -494,174 +479,178 @@ do_poll(struct imap_store *store)
 	struct ev_loop *loop = chan->loop;
 #endif
 
-	for (int rc;;) switch (store->state) {
-	case STATE_GROUND:
-		imap_log(store, LOG_DEBUG, "Connecting...");
+	for (int rc;;)
+		switch (store->state) {
+		case STATE_GROUND:
+			imap_log(store, LOG_DEBUG, "Connecting...");
 
-		store->bio = create_source_bio(store);
-		if (store->bio == NULL) {
-			store->state = STATE_ERROR;
-			break;
-		}
-
-		store->sink_bio = create_sink_bio(store);
-		if (store->sink_bio == NULL) {
-			store->state = STATE_ERROR;
-			break;
-		}
-
-		BIO_push(store->bio, store->sink_bio);
-
-		store->ssl_bio = NULL;
-		store->expected_tag = 0;
-		store->seq_num = 0;
-		store->state = STATE_CONNECTING;
-		break;
-
-	case STATE_CONNECTING:
-		if ((rc = BIO_do_connect(store->bio)) != 1) {
-			if (!BIO_should_retry(store->bio)) {
+			store->bio = create_source_bio(store);
+			if (store->bio == NULL) {
 				store->state = STATE_ERROR;
 				break;
 			}
-		}
 
-		if (!ev_is_active(&store->io_watcher)) {
-			int fd = BIO_get_fd(store->bio, NULL);
-			ev_io_set(&store->io_watcher, fd, EV_READ | EV_WRITE);
-			ev_io_start(EV_A_ &store->io_watcher);
-		}
+			store->sink_bio = create_sink_bio(store);
+			if (store->sink_bio == NULL) {
+				store->state = STATE_ERROR;
+				break;
+			}
 
-		if (rc != 1) {
-			update_io_interest(EV_A_ store);
-			return;
-		}
+			BIO_push(store->bio, store->sink_bio);
 
-		store->state = STATE_CONNECTED;
-		break;
-
-	case STATE_CONNECTED:
-		imap_log(store, LOG_DEBUG, "Connected");
-
-		if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_IMAPS)
-			store->state = STATE_SSL_GROUND;
-		else
-			store->state = STATE_ESTABLISHED;
-		break;
-
-	case STATE_SSL_GROUND:
-		imap_log(store, LOG_DEBUG, "Performing SSL handshake...");
-
-		store->ssl_bio = create_ssl_bio(store);
-		if (store->ssl_bio == NULL) {
-			store->state = STATE_ERROR;
+			store->ssl_bio = NULL;
+			store->expected_tag = 0;
+			store->seq_num = 0;
+			store->state = STATE_CONNECTING;
 			break;
-		}
 
-		BIO_pop(store->sink_bio);
-		BIO_push(store->bio, store->ssl_bio);
-		BIO_push(store->bio, store->sink_bio);
+		case STATE_CONNECTING:
+			if ((rc = BIO_do_connect(store->bio)) != 1) {
+				if (!BIO_should_retry(store->bio)) {
+					store->state = STATE_ERROR;
+					break;
+				}
+			}
 
-		store->state = STATE_SSL_HANDSHAKING;
-		break;
+			if (!ev_is_active(&store->io_watcher)) {
+				int fd = BIO_get_fd(store->bio, NULL);
+				ev_io_set(&store->io_watcher, fd, EV_READ | EV_WRITE);
+				ev_io_start(EV_A_ & store->io_watcher);
+			}
 
-	case STATE_SSL_HANDSHAKING:
-		if (BIO_do_handshake(store->bio) != 1) {
-			if (BIO_should_retry(store->bio)) {
+			if (rc != 1) {
 				update_io_interest(EV_A_ store);
 				return;
 			}
 
-			store->state = STATE_ERROR;
+			store->state = STATE_CONNECTED;
 			break;
-		}
 
-		store->state = STATE_SSL_ESTABLISHED;
-		break;
+		case STATE_CONNECTED:
+			imap_log(store, LOG_DEBUG, "Connected");
 
-	case STATE_SSL_ESTABLISHED:
-	{
-		SSL *ssl;
-		X509 *untrusted_cert;
-		int err;
-		BIO_get_ssl(store->bio, &ssl);
-		if ((untrusted_cert = SSL_get_peer_certificate(ssl)) == NULL) {
-			imap_log(store, LOG_ERR, "No certificate");
-			store->state = STATE_ERROR;
+			if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_IMAPS)
+				store->state = STATE_SSL_GROUND;
+			else
+				store->state = STATE_ESTABLISHED;
 			break;
-		} else if ((err = SSL_get_verify_result(ssl)) != X509_V_OK) {
-			SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
-			X509_STORE *cert_store = SSL_CTX_get_cert_store(ctx);
-			STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(cert_store);
-			for (int i = 0; i < sk_X509_OBJECT_num(objs); ++i) {
-				X509_OBJECT *obj = sk_X509_OBJECT_value(objs, i);
-				X509 *trusted_cert = X509_OBJECT_get0_X509(obj);
-				if (!X509_cmp(untrusted_cert, trusted_cert))
-					goto cert_trusted;
+
+		case STATE_SSL_GROUND:
+			imap_log(store, LOG_DEBUG, "Performing SSL handshake...");
+
+			store->ssl_bio = create_ssl_bio(store);
+			if (store->ssl_bio == NULL) {
+				store->state = STATE_ERROR;
+				break;
 			}
 
-			imap_log(store, LOG_ERR, "Certificate verification failed: %s",
-					X509_verify_cert_error_string(err));
-			if (opt_verbose)
-				X509_print_fp(stdout, untrusted_cert);
-			store->state = STATE_ERROR;
+			BIO_pop(store->sink_bio);
+			BIO_push(store->bio, store->ssl_bio);
+			BIO_push(store->bio, store->sink_bio);
+
+			store->state = STATE_SSL_HANDSHAKING;
 			break;
 
-		cert_trusted:;
+		case STATE_SSL_HANDSHAKING:
+			if (BIO_do_handshake(store->bio) != 1) {
+				if (BIO_should_retry(store->bio)) {
+					update_io_interest(EV_A_ store);
+					return;
+				}
+
+				store->state = STATE_ERROR;
+				break;
+			}
+
+			store->state = STATE_SSL_ESTABLISHED;
+			break;
+
+		case STATE_SSL_ESTABLISHED:
+		{
+			SSL *ssl;
+			X509 *untrusted_cert;
+			int err;
+			BIO_get_ssl(store->bio, &ssl);
+			if ((untrusted_cert = SSL_get_peer_certificate(ssl)) == NULL) {
+				imap_log(store, LOG_ERR, "No certificate");
+				store->state = STATE_ERROR;
+				break;
+			} else if ((err = SSL_get_verify_result(ssl)) != X509_V_OK) {
+				SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+				X509_STORE *cert_store = SSL_CTX_get_cert_store(ctx);
+				STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(cert_store);
+				for (int i = 0; i < sk_X509_OBJECT_num(objs); ++i) {
+					X509_OBJECT *obj = sk_X509_OBJECT_value(objs, i);
+					X509 *trusted_cert = X509_OBJECT_get0_X509(obj);
+					if (!X509_cmp(untrusted_cert, trusted_cert))
+						goto cert_trusted;
+				}
+
+				imap_log(
+					store,
+					LOG_ERR,
+					"Certificate verification failed: %s",
+					X509_verify_cert_error_string(err)
+				);
+				if (opt_verbose)
+					X509_print_fp(stdout, untrusted_cert);
+				store->state = STATE_ERROR;
+				break;
+
+			cert_trusted:;
+			}
 		}
-	}
 
-		imap_log(store, LOG_DEBUG, "SSL connection established");
+			imap_log(store, LOG_DEBUG, "SSL connection established");
 
-		if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_STARTTLS)
-			write_cmdf(store, STATE_IMAP_CAPABILITY, "CAPABILITY");
-		else
-			store->state = STATE_ESTABLISHED;
-		break;
+			if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_STARTTLS)
+				write_cmdf(store, STATE_IMAP_CAPABILITY, "CAPABILITY");
+			else
+				store->state = STATE_ESTABLISHED;
+			break;
 
-	case STATE_ESTABLISHED:
-		imap_log(store, LOG_DEBUG, "Connection established");
-		store->state = STATE_IMAP_GROUND;
-		break;
+		case STATE_ESTABLISHED:
+			imap_log(store, LOG_DEBUG, "Connection established");
+			store->state = STATE_IMAP_GROUND;
+			break;
 
-	case STATE_DISCONNECTED:
-		imap_log(store, LOG_ERR, "Disconnected");
-		ev_timer_stop(EV_A_ &store->timeout_watcher);
-		ev_timer_set(&store->timeout_watcher, 3, 0);
-		ev_timer_start(EV_A_ &store->timeout_watcher);
-		store->state = STATE_RESET;
-		break;
+		case STATE_DISCONNECTED:
+			imap_log(store, LOG_ERR, "Disconnected");
+			ev_timer_stop(EV_A_ & store->timeout_watcher);
+			ev_timer_set(&store->timeout_watcher, 3, 0);
+			ev_timer_start(EV_A_ & store->timeout_watcher);
+			store->state = STATE_RESET;
+			break;
 
-	case STATE_ERROR:
-		imap_log(store, LOG_ERR, "Error");
-		ERR_print_errors_fp(stderr);
-		ev_timer_stop(EV_A_ &store->timeout_watcher);
-		ev_timer_set(&store->timeout_watcher, 5 * 60, 0);
-		ev_timer_start(EV_A_ &store->timeout_watcher);
-		store->state = STATE_RESET;
-		break;
+		case STATE_ERROR:
+			imap_log(store, LOG_ERR, "Error");
+			ERR_print_errors_fp(stderr);
+			ev_timer_stop(EV_A_ & store->timeout_watcher);
+			ev_timer_set(&store->timeout_watcher, 5 * 60, 0);
+			ev_timer_start(EV_A_ & store->timeout_watcher);
+			store->state = STATE_RESET;
+			break;
 
-	case STATE_RESET:
-		BIO_free_all(store->bio);
-		store->bio = NULL;
-		ev_io_stop(EV_A_ &store->io_watcher);
-		return;
-
-	default:
-	{
-		char line[4096];
-		rc = BIO_gets(store->bio, line, sizeof line);
-		if (2 <= rc) {
-			line[rc - 2] = '\0';
-			feed(store, line);
-		} else if (BIO_should_retry(store->bio)) {
-			BIO_flush(store->bio);
-			update_io_interest(EV_A_ store);
+		case STATE_RESET:
+			BIO_free_all(store->bio);
+			store->bio = NULL;
+			ev_io_stop(EV_A_ & store->io_watcher);
 			return;
-		} else {
-			store->state = STATE_DISCONNECTED;
+
+		default:
+		{
+			char line[4096];
+			rc = BIO_gets(store->bio, line, sizeof line);
+			if (2 <= rc) {
+				line[rc - 2] = '\0';
+				feed(store, line);
+			} else if (BIO_should_retry(store->bio)) {
+				BIO_flush(store->bio);
+				update_io_interest(EV_A_ store);
+				return;
+			} else {
+				store->state = STATE_DISCONNECTED;
+			}
+		} break;
 		}
-	}
-		break;
-	}
 }

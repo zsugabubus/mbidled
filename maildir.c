@@ -46,8 +46,10 @@ new_stat_cb(EV_P_ ev_stat *w, int revents)
 }
 
 static void
-maildir_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store,
-		char const *mailbox_path, char const *mailbox)
+maildir_open_mailbox(
+	struct channel *chan, struct mbconfig_store *mb_store, char const *mailbox_path,
+	char const *mailbox
+)
 {
 	char tmp[PATH_MAX];
 	ASSERT_SNPRINTF(tmp, "%s/cur", mailbox_path);
@@ -108,8 +110,7 @@ maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store)
 		char mailbox_path[PATH_MAX];
 		ASSERT_SNPRINTF(mailbox_path, "%s/%s", maildir_path, dent->d_name);
 		/* Inbox requires special handling. */
-		if (mb_maildir_store->inbox &&
-		    !strcmp(mb_maildir_store->inbox, mailbox_path))
+		if (mb_maildir_store->inbox && !strcmp(mb_maildir_store->inbox, mailbox_path))
 			continue;
 		maildir_open_mailbox(chan, mb_store, mailbox_path, dent->d_name);
 	}

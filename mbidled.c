@@ -8,18 +8,16 @@
 #include <unistd.h>
 
 #include "channel.h"
-#include "mbidled.h"
 #include "mbconfig.h"
+#include "mbidled.h"
 #include "version.h"
 
-static char const USAGE[] =
-	"Usage: %s -c MBSYNC_CONFIG [-e COMMAND] [-v]\n"
-	"Run command on mailbox change.\n"
-	"\n"
-	"Try man mbidled(1) for more information.\n";
+static char const USAGE[] = "Usage: %s -c MBSYNC_CONFIG [-e COMMAND] [-v]\n"
+			    "Run command on mailbox change.\n"
+			    "\n"
+			    "Try man mbidled(1) for more information.\n";
 
-char const *opt_cmd =
-	"mbsync -c \"$MBIDLED_CONFIG\" \"$MBIDLED_CHANNEL:$MBIDLED_MAILBOX\"";
+char const *opt_cmd = "mbsync -c \"$MBIDLED_CONFIG\" \"$MBIDLED_CHANNEL:$MBIDLED_MAILBOX\"";
 int opt_verbose = 0;
 
 void
@@ -36,10 +34,14 @@ main(int argc, char *argv[])
 	(void)SSL_library_init();
 	SSL_load_error_strings();
 
-	sigaction(SIGPIPE, &(struct sigaction const){
-		.sa_flags = SA_RESTART,
-		.sa_handler = SIG_IGN,
-	}, NULL);
+	sigaction(
+		SIGPIPE,
+		&(struct sigaction const){
+			.sa_flags = SA_RESTART,
+			.sa_handler = SIG_IGN,
+		},
+		NULL
+	);
 
 	char const *opt_config = NULL;
 
@@ -86,8 +88,10 @@ main(int argc, char *argv[])
 		if (!xdg && legacy) {
 			opt_config = path_legacy;
 		} else if (xdg && legacy) {
-			fprintf(stderr, "Using configuration file %s instead of legacy %s.\n",
-					path_xdg, path_legacy);
+			fprintf(stderr,
+				"Using configuration file %s instead of legacy %s.\n",
+				path_xdg,
+				path_legacy);
 			opt_config = path_xdg;
 		} else {
 			opt_config = path_xdg;
@@ -98,11 +102,12 @@ main(int argc, char *argv[])
 	struct mbconfig_parser mb_config_parser;
 	mb_config_parser.config = &mb_config;
 	if (mbconfig_parse(&mb_config_parser, opt_config)) {
-		fprintf(stderr, "%s:%d:%d: %s\n",
-				opt_config,
-				mb_config_parser.lnum,
-				mb_config_parser.col,
-				mb_config_parser.error_msg);
+		fprintf(stderr,
+			"%s:%d:%d: %s\n",
+			opt_config,
+			mb_config_parser.lnum,
+			mb_config_parser.col,
+			mb_config_parser.error_msg);
 		fprintf(stderr, "Could not parse configuration file.\n");
 		return EXIT_FAILURE;
 	}
@@ -110,8 +115,8 @@ main(int argc, char *argv[])
 	struct ev_loop *loop = EV_DEFAULT;
 
 	struct mbconfig_channel *mb_chan;
-	SLIST_FOREACH(mb_chan, &mb_config.channels, link)
-		channel_open(EV_A_ &mb_config, mb_chan);
+	SLIST_FOREACH (mb_chan, &mb_config.channels, link)
+		channel_open(EV_A_ & mb_config, mb_chan);
 
 	ev_run(EV_A_ 0);
 }

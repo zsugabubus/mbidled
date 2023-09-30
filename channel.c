@@ -63,13 +63,16 @@ channel_log(struct channel *chan, int priority, char const *format, ...)
 }
 
 void
-channel_store_log(struct channel const *chan, char const *store_name, char const *mailbox,
-		int priority, char const *format, va_list ap)
+channel_store_log(
+	struct channel const *chan, char const *store_name, char const *mailbox, int priority,
+	char const *format, va_list ap
+)
 {
 	char buf[1024];
 	int n;
-	n = snprintf(buf, sizeof buf, "Channel [%s]: %s [%s]: ",
-			chan->mb_chan->name, store_name, mailbox);
+	n = snprintf(
+		buf, sizeof buf, "Channel [%s]: %s [%s]: ", chan->mb_chan->name, store_name, mailbox
+	);
 	if ((int)sizeof buf < n)
 		n = (int)sizeof buf;
 
@@ -85,8 +88,7 @@ channel_open(EV_P_ struct mbconfig *mb_config, struct mbconfig_channel *mb_chan)
 	ASSERT(chan = malloc(sizeof *chan));
 
 	chan->loop = loop;
-	chan->mb_config = mb_config,
-	chan->mb_chan = mb_chan;
+	chan->mb_config = mb_config, chan->mb_chan = mb_chan;
 	LIST_INIT(&chan->boxes);
 
 	if (MBCONFIG_SYNC_PUSH & mb_chan->sync)
@@ -142,15 +144,23 @@ child_cb(EV_P_ ev_child *w, int revents)
 	struct channel_mailbox *box = container_of(w, struct channel_mailbox, child_watcher);
 
 	box->state = STATE_TERMINATED;
-	ev_timer_init(&box->timeout_watcher, interval_timeout_cb,
-			box->chan->mb_chan->mbidled.start_interval, 0);
-	ev_timer_start(EV_A_ &box->timeout_watcher);
+	ev_timer_init(
+		&box->timeout_watcher,
+		interval_timeout_cb,
+		box->chan->mb_chan->mbidled.start_interval,
+		0
+	);
+	ev_timer_start(EV_A_ & box->timeout_watcher);
 
 	int ok = WIFEXITED(w->rstatus) && WEXITSTATUS(w->rstatus) == EXIT_SUCCESS;
 	int level = ok ? LOG_INFO : LOG_ERR;
-	channel_log(box->chan, level, "Mailbox [%s] command terminated with %s",
-			box->mailbox,
-			ok ? "success" : "failure");
+	channel_log(
+		box->chan,
+		level,
+		"Mailbox [%s] command terminated with %s",
+		box->mailbox,
+		ok ? "success" : "failure"
+	);
 }
 
 static void
@@ -184,16 +194,13 @@ channel_mailbox_run_sync(struct channel_mailbox *box)
 }
 
 void
-channel_notify_change(struct channel *chan, struct mbconfig_store *store,
-		char const *mailbox)
+channel_notify_change(struct channel *chan, struct mbconfig_store *store, char const *mailbox)
 {
 	int far = store == chan->mb_chan->far.store;
-	int from = far
-		? MBCONFIG_PROPAGATE_FAR
-		: MBCONFIG_PROPAGATE_NEAR;
+	int from = far ? MBCONFIG_PROPAGATE_FAR : MBCONFIG_PROPAGATE_NEAR;
 
 	struct channel_mailbox *box;
-	LIST_FOREACH(box, &chan->boxes, link) {
+	LIST_FOREACH (box, &chan->boxes, link) {
 		if (strcmp(box->mailbox, mailbox))
 			continue;
 
@@ -229,10 +236,7 @@ channel_notify_change(struct channel *chan, struct mbconfig_store *store,
 		default:
 			abort();
 		}
-		channel_log(box->chan, LOG_DEBUG, "%s from [%s:%s]",
-				action,
-				store_name,
-				mailbox);
+		channel_log(box->chan, LOG_DEBUG, "%s from [%s:%s]", action, store_name, mailbox);
 		return;
 	}
 
@@ -244,7 +248,8 @@ channel_notify_change(struct channel *chan, struct mbconfig_store *store,
 
 	box->rerun = 0;
 	box->state = STATE_WAIT;
-	ev_timer_init(&box->timeout_watcher, start_timeout_cb,
-			chan->mb_chan->mbidled.start_timeout, 0);
+	ev_timer_init(
+		&box->timeout_watcher, start_timeout_cb, chan->mb_chan->mbidled.start_timeout, 0
+	);
 	ev_timer_start(chan->loop, &box->timeout_watcher);
 }

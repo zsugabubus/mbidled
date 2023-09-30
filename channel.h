@@ -1,8 +1,8 @@
 #ifndef MBIDLED_CHANNEL_H
 #define MBIDLED_CHANNEL_H
 
-#include <sys/queue.h>
 #include <ev.h>
+#include <sys/queue.h>
 
 struct mbconfig;
 struct mbconfig_channel;
@@ -20,19 +20,22 @@ struct channel {
 };
 
 void channel_open(EV_P_ struct mbconfig *mb_config, struct mbconfig_channel *mb_chan);
-void channel_notify_change(struct channel *chan, struct mbconfig_store *mb_store,
-		char const *mailbox);
+void
+channel_notify_change(struct channel *chan, struct mbconfig_store *mb_store, char const *mailbox);
 
 void imap_open_store(struct channel *chan, struct mbconfig_store *mb_store);
 void maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store);
 
 void channel_log(struct channel *chan, int priority, char const *format, ...);
-void channel_store_log(struct channel const *chan, char const *store_name, char const *mailbox,
-		int priority, char const *format, va_list ap);
+void channel_store_log(
+	struct channel const *chan, char const *store_name, char const *mailbox, int priority,
+	char const *format, va_list ap
+);
 
 #define DEFINE_CHANNEL_STORE_LOGGER(store, store_name) \
-	static void \
-	store##_log(struct store##_store const *store, int priority, char const *format, ...) \
+	static void store##_log( \
+		struct store##_store const *store, int priority, char const *format, ... \
+	) \
 	{ \
 		va_list ap; \
 		va_start(ap, format); \

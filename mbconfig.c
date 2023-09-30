@@ -30,9 +30,7 @@ enum {
 
 #define SECTION_FOREACH \
 	int rc = parse_str(ctx, &data->name); \
-	while (rc != ERR && \
-	       (rc = read_line(ctx)) == OK && \
-	       (rc = read_kw(ctx)) == OK && \
+	while (rc != ERR && (rc = read_line(ctx)) == OK && (rc = read_kw(ctx)) == OK && \
 	       (rc = preprocess_cmd(ctx, 0)) == OK)
 
 static int
@@ -270,7 +268,7 @@ parse_store(struct mbconfig_parser *ctx, struct mbconfig_store *data)
 
 	do {
 		struct mbconfig_imap_store *imap_store;
-		SLIST_FOREACH(imap_store, &ctx->config->imap_stores, link)
+		SLIST_FOREACH (imap_store, &ctx->config->imap_stores, link)
 			if (strcmp(store, imap_store->name) == 0)
 				break;
 		if (imap_store) {
@@ -280,7 +278,7 @@ parse_store(struct mbconfig_parser *ctx, struct mbconfig_store *data)
 		}
 
 		struct mbconfig_maildir_store *maildir_store;
-		SLIST_FOREACH(maildir_store, &ctx->config->maildir_stores, link)
+		SLIST_FOREACH (maildir_store, &ctx->config->maildir_stores, link)
 			if (strcmp(store, maildir_store->name) == 0)
 				break;
 		if (maildir_store) {
@@ -341,9 +339,7 @@ preprocess_cmd(struct mbconfig_parser *ctx, int global)
 		} else if (ISARG("NEAR")) {
 			c->strict_propagate = MBCONFIG_PROPAGATE_NEAR;
 		} else if (ISARG("BOTH")) {
-			c->strict_propagate =
-				MBCONFIG_PROPAGATE_NEAR |
-				MBCONFIG_PROPAGATE_FAR;
+			c->strict_propagate = MBCONFIG_PROPAGATE_NEAR | MBCONFIG_PROPAGATE_FAR;
 		} else {
 			ctx->error_msg = "Unknown argument";
 			return ERR;
@@ -358,8 +354,9 @@ preprocess_cmd(struct mbconfig_parser *ctx, int global)
 
 	if (global)
 		/* Reset local config to global. */
-		memcpy(&ctx->channel_config[0], &ctx->channel_config[1],
-				sizeof ctx->channel_config[0]);
+		memcpy(&ctx->channel_config[0],
+		       &ctx->channel_config[1],
+		       sizeof ctx->channel_config[0]);
 
 	return rc;
 }
@@ -380,7 +377,8 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 	data->ssl = MBCONFIG_SSL_STARTTLS;
 	data->ssl_versions = SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1;
 
-	SECTION_FOREACH {
+	SECTION_FOREACH
+	{
 		if (ISARG("HOST")) {
 			rc = parse_str(ctx, &data->host);
 		} else if (ISARG("PORT")) {
@@ -443,17 +441,16 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 		} else if (ISARG("SSLVERSIONS")) {
 #define ARGS \
 	/* xmacro(name, op) */ \
-	xmacro("SSLV3", SSL_OP_NO_SSLv3) \
-	xmacro("TLSV1", SSL_OP_NO_TLSv1) \
-	xmacro("TLSV1.1", SSL_OP_NO_TLSv1_1) \
-	xmacro("TLSV1.2", SSL_OP_NO_TLSv1_2) \
-	xmacro("TLSV1.3", SSL_OP_NO_TLSv1_3) \
+	xmacro("SSLV3", SSL_OP_NO_SSLv3) xmacro("TLSV1", SSL_OP_NO_TLSv1) \
+		xmacro("TLSV1.1", SSL_OP_NO_TLSv1_1) xmacro("TLSV1.2", SSL_OP_NO_TLSv1_2) \
+			xmacro("TLSV1.3", SSL_OP_NO_TLSv1_3)
 
 #define xmacro(name, op) | op
 			data->ssl_versions = 0 ARGS;
 #undef xmacro
 			while ((rc = read_kw(ctx)) == OK) {
-				if (0) (void)0;
+				if (0)
+					(void)0;
 #define xmacro(name, op) else if (ISARG(name)) data->ssl_versions &= ~(op);
 				ARGS
 #undef xmacro
@@ -496,12 +493,13 @@ parse_imap_store_section(struct mbconfig_parser *ctx)
 {
 	ALLOC_DATA(imap_stores, mbconfig_imap_store);
 
-	SECTION_FOREACH {
+	SECTION_FOREACH
+	{
 		if (ISARG("ACCOUNT")) {
 			if ((rc = expect_str(ctx)) <= 0)
 				break;
 			struct mbconfig_imap_account *account;
-			SLIST_FOREACH(account, &ctx->config->imap_accounts, link)
+			SLIST_FOREACH (account, &ctx->config->imap_accounts, link)
 				if (strcmp(ctx->arg, account->name) == 0)
 					break;
 			if (account == NULL) {
@@ -527,7 +525,8 @@ parse_maildir_store_section(struct mbconfig_parser *ctx)
 {
 	ALLOC_DATA(maildir_stores, mbconfig_maildir_store);
 
-	SECTION_FOREACH {
+	SECTION_FOREACH
+	{
 		if (ISARG("PATH"))
 			rc = parse_path(ctx, &data->path);
 		else if (ISARG("INBOX"))
@@ -551,7 +550,8 @@ parse_channel_section(struct mbconfig_parser *ctx)
 
 	data->sync = MBCONFIG_SYNC_PUSH | MBCONFIG_SYNC_PULL;
 
-	SECTION_FOREACH {
+	SECTION_FOREACH
+	{
 		if (ISARG("FAR")) {
 			rc = parse_store(ctx, &data->far);
 		} else if (ISARG("NEAR")) {
@@ -569,9 +569,7 @@ parse_channel_section(struct mbconfig_parser *ctx)
 					data->sync |= MBCONFIG_SYNC_PUSH;
 				else
 					/* Specifying flag both pulls and pushes. */
-					data->sync |=
-						MBCONFIG_SYNC_PULL |
-						MBCONFIG_SYNC_PUSH;
+					data->sync |= MBCONFIG_SYNC_PULL | MBCONFIG_SYNC_PUSH;
 			}
 		} else {
 			skip_unknown_cmd(ctx);
@@ -604,9 +602,7 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 	ctx->channel_config[1] = (struct mbconfig_mbidled_channel){
 		.start_timeout = 1,
 		.start_interval = 30,
-		.strict_propagate =
-			MBCONFIG_PROPAGATE_NEAR |
-			MBCONFIG_PROPAGATE_FAR,
+		.strict_propagate = MBCONFIG_PROPAGATE_NEAR | MBCONFIG_PROPAGATE_FAR,
 	};
 
 	SLIST_INIT(&config->imap_accounts);
@@ -631,11 +627,8 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 	}
 
 	int rc = NONE;
-	while (rc != ERR &&
-	       (rc = read_line(ctx)) == OK &&
-	       (rc = read_kw(ctx)) != ERR &&
-	       (rc = preprocess_cmd(ctx, 1)) == OK)
-	{
+	while (rc != ERR && (rc = read_line(ctx)) == OK && (rc = read_kw(ctx)) != ERR &&
+	       (rc = preprocess_cmd(ctx, 1)) == OK) {
 		if (ISARG("IMAPACCOUNT"))
 			rc = parse_imap_account_section(ctx);
 		else if (ISARG("IMAPSTORE"))
@@ -710,12 +703,12 @@ mbconfig_patterns_test(struct mbconfig_str_list const *patterns, char const *s)
 		return 1;
 
 	struct mbconfig_str *pattern;
-	SLIST_FOREACH(pattern, patterns, link) {
-		int not;
+	SLIST_FOREACH (pattern, patterns, link) {
+		int not ;
 		char const *pat = pattern->str;
 		pat += (not = (*pat == '!'));
 		if (match_pattern(pat, s))
-			return !not;
+			return !not ;
 	}
 
 	return 0;

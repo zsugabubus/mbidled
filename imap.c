@@ -27,11 +27,13 @@ struct imap_store {
 		STATE_GROUND,
 		STATE_CONNECTING,
 		STATE_CONNECTED,
-		STATE_CONNECTING_SSL,
-		STATE_ESTABLISHED_SSL,
+		STATE_SSL_GROUND,
+		STATE_SSL_HANDSHAKING,
+		STATE_SSL_ESTABLISHED,
 		STATE_ESTABLISHED,
 		STATE_IMAP_GROUND,
 		STATE_IMAP_CAPABILITY,
+		STATE_IMAP_STARTTLS,
 		STATE_IMAP_LOGIN,
 		STATE_IMAP_LIST,
 		STATE_IMAP_EXAMINE,
@@ -43,8 +45,11 @@ struct imap_store {
 	enum {
 		CAP_IDLE = 1 << 0,
 		CAP_LOGINDISABLED = 1 << 1,
+		CAP_STARTTLS = 1 << 2,
 	} cap;
 	BIO *bio;
+	BIO *ssl_bio;
+	BIO *sink_bio;
 
 	int expected_tag;
 	int seq_num;
@@ -212,6 +217,8 @@ feed(struct imap_store *store, char *line)
 			store->cap |= CAP_IDLE;
 		if (strstr(line, " LOGINDISABLED"))
 			store->cap |= CAP_LOGINDISABLED;
+		if (strstr(line, " STARTTLS"))
+			store->cap |= CAP_STARTTLS;
 		return;
 
 	case STATE_IMAP_LIST:
@@ -256,9 +263,24 @@ feed(struct imap_store *store, char *line)
 
 	switch (store->state) {
 	case STATE_IMAP_CAPABILITY:
+	{
+		struct mbconfig_imap_account *mb_account =
+			store->mb_store->imap_store->account;
+
 		if (!(store->cap & CAP_IDLE)) {
 			imap_log(store, LOG_ERR, "IDLE not supported");
 			store->state = STATE_ERROR;
+			return;
+		}
+
+		if (store->ssl_bio == NULL && mb_account->ssl == MBCONFIG_SSL_STARTTLS) {
+			if (!(store->cap & CAP_STARTTLS)) {
+				imap_log(store, LOG_ERR, "STARTTLS not supported");
+				store->state = STATE_ERROR;
+				return;
+			}
+
+			write_cmdf(store, STATE_IMAP_STARTTLS, "STARTTLS");
 			return;
 		}
 
@@ -267,9 +289,6 @@ feed(struct imap_store *store, char *line)
 			store->state = STATE_ERROR;
 			return;
 		}
-
-		struct mbconfig_imap_account *mb_account =
-			store->mb_store->imap_store->account;
 
 		imap_log(store, LOG_DEBUG, "Logging in...");
 		if (!mb_account->login_auth) {
@@ -291,7 +310,12 @@ feed(struct imap_store *store, char *line)
 				"LOGIN \"%q\" \"%q\"",
 				mb_account->user,
 				mb_account->pass);
+	}
 		break;
+
+	case STATE_IMAP_STARTTLS:
+		store->state = STATE_SSL_GROUND;
+		return;
 
 	case STATE_IMAP_LOGIN:
 		imap_log(store, LOG_NOTICE, "Logged in");
@@ -329,100 +353,132 @@ feed(struct imap_store *store, char *line)
 }
 
 static BIO *
-create_transport(struct imap_store *store)
+create_source_bio(struct imap_store const *store)
 {
-	struct mbconfig_imap_account *mb_account =
+	(void)store;
+
+	return BIO_new(BIO_f_buffer());
+}
+
+static BIO *
+create_ssl_bio(struct imap_store const *store)
+{
+	struct mbconfig_imap_account const *mb_account =
 		store->mb_store->imap_store->account;
 
 	SSL_CTX *ctx = NULL;
-	BIO *chain = NULL, *bio = NULL;
+	BIO *bio = NULL;
 
-	if ((bio = BIO_new(BIO_f_buffer())) == NULL)
+	if ((ctx = SSL_CTX_new(TLS_client_method())) == NULL ||
+	    (mb_account->system_certs &&
+	     SSL_CTX_set_default_verify_paths(ctx) != 1) ||
+	    (mb_account->cert_file != NULL &&
+	     X509_STORE_load_locations(
+			SSL_CTX_get_cert_store(ctx),
+			mb_account->cert_file, NULL) != 1))
 		goto fail;
-	chain = BIO_push(chain, bio), bio = NULL;
 
-	if (mb_account->ssl == MBCONFIG_SSL_IMAPS) {
-		if ((ctx = SSL_CTX_new(TLS_client_method())) == NULL ||
-		    (mb_account->system_certs &&
-		     SSL_CTX_set_default_verify_paths(ctx) != 1) ||
-		    (mb_account->cert_file != NULL &&
-		     X509_STORE_load_locations(
-				SSL_CTX_get_cert_store(ctx),
-				mb_account->cert_file, NULL) != 1))
-			goto fail;
+	/* Continue handshake even if certificate seems invalid.
+	 * Errored certificate will be checked against certificates
+	 * explicitly trusted by the user. */
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+	SSL_CTX_set_options(ctx, mb_account->ssl_versions);
 
-		/* Continue handshake even if certificate seems invalid.
-		 * Errored certificate will be checked against certificates
-		 * explicitly trusted by the user. */
-		SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
-		SSL_CTX_set_options(ctx, mb_account->ssl_versions);
+	SSL *ssl = NULL;
+	if ((bio = BIO_new_ssl(ctx, 1 /* Client. */)) == NULL ||
+	    BIO_get_ssl(bio, &ssl) != 1 ||
+	    (mb_account->host != NULL &&
+	     SSL_set1_host(ssl, mb_account->host) != 1) ||
+	    (mb_account->ciphers != NULL &&
+	     SSL_set_cipher_list(ssl, mb_account->ciphers) != 1) ||
+	    (mb_account->host != NULL &&
+	     SSL_set_tlsext_host_name(ssl, mb_account->host) != 1))
+		goto fail;
 
-		SSL *ssl = NULL;
-		if ((bio = BIO_new_ssl(ctx, 1 /* Client. */)) == NULL ||
-		    BIO_get_ssl(bio, &ssl) != 1 ||
-		    (mb_account->host != NULL &&
-		     SSL_set1_host(ssl, mb_account->host) != 1) ||
-		    (mb_account->ciphers != NULL &&
-		     SSL_set_cipher_list(ssl, mb_account->ciphers) != 1) ||
-		    (mb_account->host != NULL &&
-		     SSL_set_tlsext_host_name(ssl, mb_account->host) != 1))
-			goto fail;
-
-		SSL_set_mode(ssl,
-				SSL_MODE_AUTO_RETRY |
-				SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
-				SSL_MODE_ENABLE_PARTIAL_WRITE);
-
-		chain = BIO_push(chain, bio), bio = NULL;
-	}
-
-	if (mb_account->tunnel_cmd) {
-		int pair[2];
-		int type = SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK;
-		if (socketpair(PF_UNIX, type, 0, pair) < 0)
-			goto fail;
-
-		if (!fork()) {
-			if (dup2(pair[0], STDIN_FILENO) < 0 ||
-			    dup2(pair[0], STDOUT_FILENO) < 0 ||
-			    execl("/bin/sh", "sh", "-c", mb_account->tunnel_cmd, NULL) < 0)
-				imap_log(store, LOG_ERR, "exec() failed: %s", strerror(errno));
-			_exit(EXIT_FAILURE);
-		}
-
-		close(pair[0]);
-
-		if ((bio = BIO_new_fd(pair[1], 1 /* Close. */)) == NULL ||
-		    BIO_set_nbio(bio, 1) != 1)
-			goto fail;
-	} else {
-		char const *port = mb_account->port;
-		if (!port) {
-			static char const DEFAULT_PORTS[][4] = {
-				[MBCONFIG_SSL_NONE] = "143",
-				[MBCONFIG_SSL_IMAPS] = "993",
-			};
-
-			port = DEFAULT_PORTS[mb_account->ssl];
-		}
-
-		if ((bio = BIO_new(BIO_s_connect())) == NULL ||
-		    BIO_set_nbio(bio, 1) != 1 ||
-		    BIO_set_conn_hostname(bio, mb_account->host) != 1 ||
-		    BIO_set_conn_port(bio, port) != 1)
-			goto fail;
-	}
-	chain = BIO_push(chain, bio), bio = NULL;
+	SSL_set_mode(ssl,
+			SSL_MODE_AUTO_RETRY |
+			SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+			SSL_MODE_ENABLE_PARTIAL_WRITE);
 
 	SSL_CTX_free(ctx);
-
-	return chain;
+	return bio;
 
 fail:
 	SSL_CTX_free(ctx);
-	BIO_free_all(chain);
 	BIO_free(bio);
 	return NULL;
+}
+
+static BIO *
+create_tunnel_bio(struct imap_store const *store, char const *cmd)
+{
+	BIO *bio = NULL;
+
+	int pair[2];
+	int type = SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK;
+	if (socketpair(PF_UNIX, type, 0, pair) < 0)
+		goto fail;
+
+	if (!fork()) {
+		if (dup2(pair[0], STDIN_FILENO) < 0 ||
+		    dup2(pair[0], STDOUT_FILENO) < 0 ||
+		    execl("/bin/sh", "sh", "-c", cmd, NULL) < 0)
+			imap_log(store, LOG_ERR, "exec() failed: %s", strerror(errno));
+		_exit(EXIT_FAILURE);
+	}
+
+	close(pair[0]);
+
+	if ((bio = BIO_new_fd(pair[1], 1 /* Close. */)) == NULL ||
+	    BIO_set_nbio(bio, 1) != 1)
+		goto fail;
+
+	return bio;
+
+fail:
+	BIO_free(bio);
+	return NULL;
+}
+
+static BIO *
+create_connect_bio(struct imap_store const *store)
+{
+	struct mbconfig_imap_account const *mb_account =
+		store->mb_store->imap_store->account;
+
+	BIO *bio = NULL;
+
+	char const *port = mb_account->port;
+	if (port == NULL) {
+		if (mb_account->ssl == MBCONFIG_SSL_IMAPS)
+			port = "993";
+		else
+			port = "143";
+	}
+
+	if ((bio = BIO_new(BIO_s_connect())) == NULL ||
+	    BIO_set_nbio(bio, 1) != 1 ||
+	    BIO_set_conn_hostname(bio, mb_account->host) != 1 ||
+	    BIO_set_conn_port(bio, port) != 1)
+		goto fail;
+
+	return bio;
+
+fail:
+	BIO_free(bio);
+	return NULL;
+}
+
+static BIO *
+create_sink_bio(struct imap_store *store)
+{
+	struct mbconfig_imap_account const *mb_account =
+		store->mb_store->imap_store->account;
+
+	if (mb_account->tunnel_cmd != NULL)
+		return create_tunnel_bio(store, mb_account->tunnel_cmd);
+	else
+		return create_connect_bio(store);
 }
 
 static void
@@ -435,25 +491,35 @@ do_poll(struct imap_store *store)
 
 	for (int rc;;) switch (store->state) {
 	case STATE_GROUND:
-		store->expected_tag = 0;
-		store->seq_num = 0;
+		imap_log(store, LOG_DEBUG, "Connecting...");
 
-		store->bio = create_transport(store);
-		if (!store->bio) {
+		store->bio = create_source_bio(store);
+		if (store->bio == NULL) {
 			store->state = STATE_ERROR;
 			break;
 		}
 
-		imap_log(store, LOG_DEBUG, "Connecting...");
+		store->sink_bio = create_sink_bio(store);
+		if (store->sink_bio == NULL) {
+			store->state = STATE_ERROR;
+			break;
+		}
+
+		BIO_push(store->bio, store->sink_bio);
+
+		store->ssl_bio = NULL;
+		store->expected_tag = 0;
+		store->seq_num = 0;
 		store->state = STATE_CONNECTING;
 		break;
 
 	case STATE_CONNECTING:
-		if ((rc = BIO_do_connect(store->bio)) != 1)
+		if ((rc = BIO_do_connect(store->bio)) != 1) {
 			if (!BIO_should_retry(store->bio)) {
 				store->state = STATE_ERROR;
 				break;
 			}
+		}
 
 		if (!ev_is_active(&store->io_watcher)) {
 			int fd = BIO_get_fd(store->bio, NULL);
@@ -470,16 +536,29 @@ do_poll(struct imap_store *store)
 	case STATE_CONNECTED:
 		imap_log(store, LOG_DEBUG, "Connected");
 
-		if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_IMAPS) {
-			imap_log(store, LOG_DEBUG, "Performing SSL handshake...");
-			store->state = STATE_CONNECTING_SSL;
-		} else {
+		if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_IMAPS)
+			store->state = STATE_SSL_GROUND;
+		else
 			store->state = STATE_ESTABLISHED;
-		}
 		break;
 
-	case STATE_CONNECTING_SSL:
-		/* Use first bio in the chain to let OpenSSL find SSL BIO. */
+	case STATE_SSL_GROUND:
+		imap_log(store, LOG_DEBUG, "Performing SSL handshake...");
+
+		store->ssl_bio = create_ssl_bio(store);
+		if (store->ssl_bio == NULL) {
+			store->state = STATE_ERROR;
+			break;
+		}
+
+		BIO_pop(store->sink_bio);
+		BIO_push(store->bio, store->ssl_bio);
+		BIO_push(store->bio, store->sink_bio);
+
+		store->state = STATE_SSL_HANDSHAKING;
+		break;
+
+	case STATE_SSL_HANDSHAKING:
 		if (BIO_do_handshake(store->bio) != 1) {
 			if (BIO_should_retry(store->bio))
 				return;
@@ -488,10 +567,10 @@ do_poll(struct imap_store *store)
 			break;
 		}
 
-		store->state = STATE_ESTABLISHED_SSL;
+		store->state = STATE_SSL_ESTABLISHED;
 		break;
 
-	case STATE_ESTABLISHED_SSL:
+	case STATE_SSL_ESTABLISHED:
 	{
 		SSL *ssl;
 		X509 *untrusted_cert;
@@ -524,7 +603,11 @@ do_poll(struct imap_store *store)
 	}
 
 		imap_log(store, LOG_DEBUG, "SSL connection established");
-		store->state = STATE_ESTABLISHED;
+
+		if (store->mb_store->imap_store->account->ssl == MBCONFIG_SSL_STARTTLS)
+			write_cmdf(store, STATE_IMAP_CAPABILITY, "CAPABILITY");
+		else
+			store->state = STATE_ESTABLISHED;
 		break;
 
 	case STATE_ESTABLISHED:

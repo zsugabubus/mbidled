@@ -27,12 +27,12 @@ void imap_open_store(struct channel *chan, struct mbconfig_store *mb_store);
 void maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store);
 
 void channel_log(struct channel *chan, int priority, char const *format, ...);
-void channel_store_log(struct channel *chan, char const *store_name, char const *mailbox,
+void channel_store_log(struct channel const *chan, char const *store_name, char const *mailbox,
 		int priority, char const *format, va_list ap);
 
 #define DEFINE_CHANNEL_STORE_LOGGER(store, store_name) \
 	static void \
-	store##_log(struct store##_store *store, int priority, char const *format, ...) \
+	store##_log(struct store##_store const *store, int priority, char const *format, ...) \
 	{ \
 		va_list ap; \
 		va_start(ap, format); \

@@ -17,6 +17,7 @@ struct mbconfig_imap_account {
 	int login_auth;
 	enum {
 		MBCONFIG_SSL_NONE,
+		MBCONFIG_SSL_STARTTLS,
 		MBCONFIG_SSL_IMAPS,
 	} ssl;
 	int ssl_versions;

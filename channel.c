@@ -63,7 +63,7 @@ channel_log(struct channel *chan, int priority, char const *format, ...)
 }
 
 void
-channel_store_log(struct channel *chan, char const *store_name, char const *mailbox,
+channel_store_log(struct channel const *chan, char const *store_name, char const *mailbox,
 		int priority, char const *format, va_list ap)
 {
 	char buf[1024];

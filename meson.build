@@ -17,7 +17,7 @@ if not libev_dep.found()
 	libev_dep = cc.find_library('libev')
 endif
 
-executable('mbidled',
+mbidled_exe = executable('mbidled',
 	'mbidled.c',
 	'channel.c',
 	'imap.c',
@@ -41,6 +41,16 @@ executable('mbidled',
 	install: true,
 )
 install_man('mbidled.1')
+
+test(
+	'e2e',
+	find_program('make'),
+	workdir: meson.source_root() / 'test',
+	env: [
+		'MBIDLED_PATH=' + meson.build_root()
+	],
+	depends: mbidled_exe,
+)
 
 test(
 	'lint',

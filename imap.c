@@ -66,12 +66,11 @@ io_cb(EV_P_ ev_io *w, int revents)
 	struct imap_store *store = container_of(w, struct imap_store, io_watcher);
 
 	do_poll(store);
+}
 
-	if (store->bio == NULL)
-		return;
-
-	BIO_flush(store->bio);
-
+static void
+update_io_interest(EV_P_ struct imap_store *store)
+{
 	int events = EV_READ;
 
 	if (BIO_wpending(store->bio))
@@ -533,8 +532,10 @@ do_poll(struct imap_store *store)
 			ev_io_start(EV_A_ &store->io_watcher);
 		}
 
-		if (rc != 1)
+		if (rc != 1) {
+			update_io_interest(EV_A_ store);
 			return;
+		}
 
 		store->state = STATE_CONNECTED;
 		break;
@@ -566,8 +567,10 @@ do_poll(struct imap_store *store)
 
 	case STATE_SSL_HANDSHAKING:
 		if (BIO_do_handshake(store->bio) != 1) {
-			if (BIO_should_retry(store->bio))
+			if (BIO_should_retry(store->bio)) {
+				update_io_interest(EV_A_ store);
 				return;
+			}
 
 			store->state = STATE_ERROR;
 			break;
@@ -652,6 +655,8 @@ do_poll(struct imap_store *store)
 			line[rc - 2] = '\0';
 			feed(store, line);
 		} else if (BIO_should_retry(store->bio)) {
+			BIO_flush(store->bio);
+			update_io_interest(EV_A_ store);
 			return;
 		} else {
 			store->state = STATE_DISCONNECTED;

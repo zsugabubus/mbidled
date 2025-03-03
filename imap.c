@@ -607,7 +607,7 @@ do_poll(struct imap_store *store)
 	struct ev_loop *loop = chan->loop;
 #endif
 
-	for (int rc;;) {
+	for (;;) {
 		switch (store->state) {
 		case STATE_GROUND:
 			imap_log(store, LOG_DEBUG, "Connecting...");
@@ -633,11 +633,12 @@ do_poll(struct imap_store *store)
 			break;
 
 		case STATE_CONNECTING:
-			if ((rc = BIO_do_connect(store->bio)) != 1) {
-				if (!BIO_should_retry(store->bio)) {
-					store->state = STATE_ERROR;
-					break;
-				}
+		{
+			int connected = BIO_do_connect(store->bio) == 1;
+
+			if (!connected && !BIO_should_retry(store->bio)) {
+				store->state = STATE_ERROR;
+				break;
 			}
 
 			if (!ev_is_active(&store->io_watcher)) {
@@ -646,13 +647,14 @@ do_poll(struct imap_store *store)
 				ev_io_start(EV_A_ & store->io_watcher);
 			}
 
-			if (rc != 1) {
+			if (!connected) {
 				update_io_interest(EV_A_ store);
 				return;
 			}
 
 			store->state = STATE_CONNECTED;
 			break;
+		}
 
 		case STATE_CONNECTED:
 			imap_log(store, LOG_DEBUG, "Connected");
@@ -738,9 +740,9 @@ do_poll(struct imap_store *store)
 		default:
 		{
 			char line[4096];
-			rc = BIO_gets(store->bio, line, sizeof line);
-			if (2 <= rc) {
-				line[rc - 2] = '\0';
+			int n = BIO_gets(store->bio, line, sizeof line);
+			if (n >= 2) {
+				line[n - 2] = '\0';
 				feed(store, line);
 			} else if (BIO_should_retry(store->bio)) {
 				BIO_flush(store->bio);

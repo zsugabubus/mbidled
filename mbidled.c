@@ -1,11 +1,8 @@
-#include <assert.h>
 #include <ev.h>
 #include <openssl/ssl.h>
 #include <stdarg.h>
 #include <stdlib.h>
-#include <sys/stat.h>
 #include <syslog.h>
-#include <unistd.h>
 
 #include "channel.h"
 #include "mbconfig.h"
@@ -21,11 +18,19 @@ char const *opt_cmd = "mbsync -c \"$MBIDLED_CONFIG\" \"$MBIDLED_CHANNEL:$MBIDLED
 int opt_verbose = 0;
 
 void
-print_log(int priority, char const *message)
+mb_log(int level, char const *format, ...)
 {
-	if (!opt_verbose && priority > LOG_NOTICE)
+	if (!opt_verbose && level > LOG_INFO)
 		return;
-	(void)fprintf(stderr, "<%d>%s\n", priority, message);
+
+	(void)fprintf(stderr, "<%d>", level);
+
+	va_list ap;
+	va_start(ap, format);
+	(void)vfprintf(stderr, format, ap);
+	va_end(ap);
+
+	(void)fputc('\n', stderr);
 }
 
 int
@@ -43,12 +48,12 @@ main(int argc, char *argv[])
 		NULL
 	);
 
-	char const *opt_config = NULL;
+	char const *config_path = NULL;
 
 	for (int opt; 0 <= (opt = getopt(argc, argv, "c:e:d:D:vh"));) {
 		switch (opt) {
 		case 'c':
-			opt_config = optarg;
+			config_path = optarg;
 			break;
 
 		case 'e':
@@ -69,52 +74,27 @@ main(int argc, char *argv[])
 		}
 	}
 
-	char path_xdg[PATH_MAX], path_legacy[PATH_MAX];
-	if (!opt_config) {
-		char const *config_home = getenv("XDG_CONFIG_HOME");
-		char const *home = getenv("HOME");
-		ASSERT(home);
-
-		if (config_home)
-			ASSERT_SNPRINTF(path_xdg, "%s/isyncrc", config_home);
-		else
-			ASSERT_SNPRINTF(path_xdg, "%s/.config/isyncrc", home);
-
-		ASSERT_SNPRINTF(path_legacy, "%s/.mbsyncrc", home);
-
-		struct stat st;
-		int xdg = !lstat(path_xdg, &st);
-		int legacy = !lstat(path_legacy, &st);
-		if (!xdg && legacy) {
-			opt_config = path_legacy;
-		} else if (xdg && legacy) {
-			fprintf(stderr,
-				"Using configuration file %s instead of legacy %s.\n",
-				path_xdg,
-				path_legacy);
-			opt_config = path_xdg;
-		} else {
-			opt_config = path_xdg;
-		}
+	if (config_path == NULL) {
+		fprintf(stderr, "Missing -c\n");
+		return EXIT_FAILURE;
 	}
 
 	struct mbconfig mb_config;
 	struct mbconfig_parser mb_config_parser;
 	mb_config_parser.config = &mb_config;
-	if (mbconfig_parse(&mb_config_parser, opt_config)) {
-		fprintf(stderr,
-			"%s:%d:%d: %s\n",
-			opt_config,
-			mb_config_parser.lnum,
-			mb_config_parser.col,
-			mb_config_parser.error_msg);
-		fprintf(stderr, "Could not parse configuration file.\n");
+	if (mbconfig_parse(&mb_config_parser, config_path)) {
+		mb_log(LOG_ALERT,
+		       "%s:%d:%d: %s",
+		       config_path,
+		       mb_config_parser.lnum,
+		       mb_config_parser.col,
+		       mb_config_parser.error_msg);
 		return EXIT_FAILURE;
 	}
 
 	struct ev_loop *loop = EV_DEFAULT;
 
-	struct mbconfig_channel *mb_chan;
+	struct mbconfig_channel const *mb_chan;
 	SLIST_FOREACH (mb_chan, &mb_config.channels, link)
 		channel_open(EV_A_ & mb_config, mb_chan);
 

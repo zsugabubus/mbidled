@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "mbconfig.h"
+#include "mbidled.h"
 
 enum {
 	ERR = -1,
@@ -23,9 +24,7 @@ enum {
 #define ISPREFIXARG(kw) (strncmp(ctx->arg, kw, strlen(kw)) == 0)
 
 #define ALLOC_DATA(slist_head, type) \
-	struct type *data = calloc(1, sizeof *data); \
-	if (data == NULL) \
-		abort(); \
+	struct type *data = oom(calloc(1, sizeof *data)); \
 	SLIST_INSERT_HEAD(&ctx->config->slist_head, data, link);
 
 #define SECTION_FOREACH \
@@ -159,9 +158,7 @@ parse_str(struct mbconfig_parser *ctx, char **data)
 	int rc = expect_str(ctx);
 	if (rc == OK) {
 		free(*data);
-		*data = strdup(ctx->arg);
-		if (*data == NULL)
-			abort();
+		*data = oom(strdup(ctx->arg));
 	}
 	return rc;
 }
@@ -198,29 +195,38 @@ parse_path(struct mbconfig_parser *ctx, char **data)
 
 	char *s = ctx->arg;
 	if (*s == '~') {
-		s += 1;
+		s++;
 
-		char *slash = s + strcspn(s, "/");
+		char *tail = s + strcspn(s, "/");
 
-		struct passwd *pw;
-		if (s == slash) {
-			pw = getpwuid(geteuid());
+		char const *dir;
+		if (s == tail) {
+			char const *home = getenv("HOME");
+			if (home == NULL) {
+				ctx->error_msg = "$HOME not set";
+				return ERR;
+			}
+
+			dir = home;
 		} else {
-			char old = *slash;
-			*slash = '\0';
-			pw = getpwnam(s);
-			*slash = old;
+			char saved = *tail;
+			*tail = '\0';
+
+			struct passwd *pw = getpwnam(s);
+			if (pw == NULL) {
+				ctx->error_msg = "Unknown user";
+				return ERR;
+			}
+
+			dir = pw->pw_dir;
+			*tail = saved;
 		}
 
-		int n = snprintf(NULL, 0, "%s%s", pw->pw_dir, slash);
-		*data = malloc(n + 1 /* NUL */);
-		if (*data == NULL)
-			abort();
-		sprintf(*data, "%s%s", pw->pw_dir, slash);
+		int n = snprintf(NULL, 0, "%s%s", dir, tail);
+		*data = oom(malloc(n + 1 /* NUL */));
+		sprintf(*data, "%s%s", dir, tail);
 	} else {
-		*data = strdup(s);
-		if (*data == NULL)
-			abort();
+		*data = oom(strdup(s));
 	}
 
 	return OK;
@@ -292,9 +298,7 @@ parse_store(struct mbconfig_parser *ctx, struct mbconfig_store *data)
 	} while (0);
 
 	free(data->mailbox);
-	data->mailbox = strdup(sep + 1);
-	if (data->mailbox == NULL)
-		abort();
+	data->mailbox = oom(strdup(sep + 1));
 
 	return OK;
 }
@@ -307,13 +311,8 @@ parse_patterns(struct mbconfig_parser *ctx, struct mbconfig_str_list *data)
 
 	int rc;
 	while (0 < (rc = read_str(ctx))) {
-		struct mbconfig_str *pattern = calloc(1, sizeof *pattern);
-		if (pattern == NULL)
-			abort();
-
-		pattern->str = strdup(ctx->arg);
-		if (pattern->str == NULL)
-			abort();
+		struct mbconfig_str *pattern = oom(calloc(1, sizeof *pattern));
+		pattern->str = oom(strdup(ctx->arg));
 
 		/* Note that patterns are in reverse order. */
 		SLIST_INSERT_HEAD(data, pattern, link);
@@ -393,10 +392,16 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 			rc = parse_str(ctx, &data->pass_cmd);
 		} else if (ISARG("TUNNEL")) {
 			rc = parse_str(ctx, &data->tunnel_cmd);
-		} else if (ISARG("AUTHMECHS")) {
+		} else if (ISARG("AUTHMECH") || ISARG("AUTHMECHS")) {
 			data->login_auth = 0;
-			while ((rc = read_kw(ctx)) == OK)
-				data->login_auth |= ISARG("*") || ISARG("LOGIN");
+			free(data->auth_mech);
+			data->auth_mech = NULL;
+			while ((rc = read_kw(ctx)) == OK) {
+				int asterisk_or_login = ISARG("*") || ISARG("LOGIN");
+				data->login_auth |= asterisk_or_login;
+				if (data->auth_mech == NULL && !asterisk_or_login)
+					data->auth_mech = oom(strdup(ctx->arg));
+			}
 		} else if (ISARG("TLSTYPE") || ISARG("SSLTYPE")) {
 			if ((rc = expect_kw(ctx)) != OK)
 				continue;
@@ -470,18 +475,8 @@ parse_imap_account_section(struct mbconfig_parser *ctx)
 	if (rc == ERR)
 		return ERR;
 
-	if (data->user == NULL && data->user_cmd == NULL) {
-		ctx->error_msg = "Neither User nor UserCmd present";
-		return ERR;
-	}
-
-	if (data->pass == NULL && data->pass_cmd == NULL) {
-		ctx->error_msg = "Neither Pass nor PassCmd present";
-		return ERR;
-	}
-
 	if (data->host == NULL && data->tunnel_cmd == NULL) {
-		ctx->error_msg = "Neither Host nor Tunnel present";
+		ctx->error_msg = "Expected Host or Tunnel";
 		return ERR;
 	}
 
@@ -615,9 +610,7 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 	*ctx->buf = '\0';
 	ctx->arg = ctx->buf;
 
-	config->filename = strdup(filename);
-	if (config->filename == NULL)
-		abort();
+	config->filename = oom(strdup(filename));
 
 	ctx->stream = fopen(filename, "r");
 	if (ctx->stream == NULL) {
@@ -643,28 +636,6 @@ mbconfig_parse(struct mbconfig_parser *ctx, char const *filename)
 
 	fclose(ctx->stream);
 	return rc == ERR ? -1 : 0;
-}
-
-void
-mbconfig_eval_cmd_option(char **option, char const *option_cmd)
-{
-	if (*option != NULL)
-		return;
-
-	char buf[8192];
-
-	option_cmd += *option_cmd == '+';
-	FILE *stream = popen(option_cmd, "r");
-	if (stream == NULL)
-		return;
-	char *ok = fgets(buf, sizeof buf, stream);
-	pclose(stream);
-	if (ok == NULL)
-		return;
-	char *s = strchr(buf, '\n');
-	if (s != NULL)
-		*s = '\0';
-	*option = strdup(buf);
 }
 
 static int

@@ -15,6 +15,7 @@ struct mbconfig_imap_account {
 	char *pass_cmd;
 	char *tunnel_cmd;
 	int login_auth;
+	char *auth_mech;
 	enum {
 		MBCONFIG_SSL_NONE,
 		MBCONFIG_SSL_STARTTLS,
@@ -101,7 +102,6 @@ struct mbconfig_parser {
 };
 
 int mbconfig_parse(struct mbconfig_parser *ctx, char const *filename);
-void mbconfig_eval_cmd_option(char **option, char const *option_cmd);
 int mbconfig_patterns_test(struct mbconfig_str_list const *patterns, char const *s);
 
 #endif

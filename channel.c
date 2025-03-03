@@ -29,7 +29,7 @@ struct channel_mailbox {
 };
 
 static void
-channel_store_open(struct channel *chan, struct mbconfig_store *mb_store)
+channel_store_open(struct channel *chan, struct mbconfig_store const *mb_store)
 {
 	switch (mb_store->type) {
 	case MBCONFIG_STORE_IMAP:
@@ -46,46 +46,31 @@ channel_store_open(struct channel *chan, struct mbconfig_store *mb_store)
 }
 
 void
-channel_log(struct channel *chan, int priority, char const *format, ...)
+channel_log(struct channel const *chan, int level, char const *format, ...)
 {
 	char buf[1024];
-	int n;
-	n = snprintf(buf, sizeof buf, "Channel [%s]: ", chan->mb_chan->name);
-	if ((int)sizeof buf < n)
-		n = (int)sizeof buf;
-
 	va_list ap;
 	va_start(ap, format);
-	vsnprintf(buf + n, sizeof buf - n, format, ap);
+	vsnprintf(buf, sizeof buf, format, ap);
 	va_end(ap);
-
-	print_log(priority, buf);
+	mb_log(level, "Channel [%s]: %s", chan->mb_chan->name, buf);
 }
 
 void
 channel_store_log(
-	struct channel const *chan, char const *store_name, char const *mailbox, int priority,
+	struct channel const *chan, char const *store_name, char const *mailbox, int level,
 	char const *format, va_list ap
 )
 {
 	char buf[1024];
-	int n;
-	n = snprintf(
-		buf, sizeof buf, "Channel [%s]: %s [%s]: ", chan->mb_chan->name, store_name, mailbox
-	);
-	if ((int)sizeof buf < n)
-		n = (int)sizeof buf;
-
-	vsnprintf(buf + n, sizeof buf - n, format, ap);
-
-	print_log(priority, buf);
+	vsnprintf(buf, sizeof buf, format, ap);
+	mb_log(level, "Channel [%s]: %s [%s]: %s", chan->mb_chan->name, store_name, mailbox, buf);
 }
 
 void
-channel_open(EV_P_ struct mbconfig *mb_config, struct mbconfig_channel *mb_chan)
+channel_open(EV_P_ struct mbconfig const *mb_config, struct mbconfig_channel const *mb_chan)
 {
-	struct channel *chan;
-	ASSERT(chan = malloc(sizeof *chan));
+	struct channel *chan = oom(malloc(sizeof *chan));
 
 	chan->loop = loop;
 	chan->mb_config = mb_config;
@@ -154,7 +139,7 @@ child_cb(EV_P_ ev_child *w, int revents)
 	ev_timer_start(EV_A_ & box->timeout_watcher);
 
 	int ok = WIFEXITED(w->rstatus) && WEXITSTATUS(w->rstatus) == EXIT_SUCCESS;
-	int level = ok ? LOG_INFO : LOG_ERR;
+	int level = ok ? LOG_DEBUG : LOG_ERR;
 	channel_log(
 		box->chan,
 		level,
@@ -195,7 +180,7 @@ channel_mailbox_run_sync(struct channel_mailbox *box)
 }
 
 void
-channel_notify_change(struct channel *chan, struct mbconfig_store *store, char const *mailbox)
+channel_notify_change(struct channel *chan, struct mbconfig_store const *store, char const *mailbox)
 {
 	int far = store == chan->mb_chan->far.store;
 	int from = far ? MBCONFIG_PROPAGATE_FAR : MBCONFIG_PROPAGATE_NEAR;
@@ -241,11 +226,11 @@ channel_notify_change(struct channel *chan, struct mbconfig_store *store, char c
 		return;
 	}
 
-	ASSERT(box = malloc(sizeof *box));
+	box = oom(malloc(sizeof *box));
 
 	LIST_INSERT_HEAD(&chan->boxes, box, link);
 	box->chan = chan;
-	ASSERT(box->mailbox = strdup(mailbox));
+	box->mailbox = oom(strdup(mailbox));
 
 	box->rerun = 0;
 	box->state = STATE_WAIT;

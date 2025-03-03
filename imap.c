@@ -16,7 +16,7 @@ static char const NAMESPACE[] = "INBOX.";
 
 struct imap_store {
 	struct channel *chan;
-	struct mbconfig_store *mb_store;
+	struct mbconfig_store const *mb_store;
 	char *mailbox;
 	int list_mailboxes;
 
@@ -46,6 +46,7 @@ struct imap_store {
 		CAP_IDLE = 1 << 0,
 		CAP_LOGINDISABLED = 1 << 1,
 		CAP_STARTTLS = 1 << 2,
+		CAP_AUTH = 1 << 3,
 	} cap;
 	BIO *bio;
 	BIO *ssl_bio;
@@ -97,27 +98,24 @@ timeout_cb(EV_P_ ev_timer *w, int revents)
 }
 
 static void
-imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store, char const *mailbox)
+imap_open_mailbox(struct channel *chan, struct mbconfig_store const *mb_store, char const *mailbox)
 {
 	int inbox = !strcmp(mailbox, "INBOX");
 
 	if (!mbconfig_patterns_test(&chan->mb_chan->patterns, mailbox)) {
 		channel_log(chan, LOG_DEBUG, "Mailbox [%s] not matched", mailbox);
-		/* INBOX must be always watced. */
+		/* INBOX must be always watched. */
 		if (!inbox)
 			return;
 	}
 
-	struct imap_store *store;
-	ASSERT(store = malloc(sizeof *store));
+	struct imap_store *store = oom(malloc(sizeof *store));
 
 	store->chan = chan;
 	store->mb_store = mb_store;
-	ASSERT(store->mailbox = strdup(mailbox));
+	store->mailbox = oom(strdup(mailbox));
 
 	store->list_mailboxes = inbox;
-
-	imap_log(store, LOG_INFO, "Watching");
 
 	ev_init(&store->io_watcher, io_cb);
 	ev_init(&store->timeout_watcher, timeout_cb);
@@ -127,7 +125,7 @@ imap_open_mailbox(struct channel *chan, struct mbconfig_store *mb_store, char co
 }
 
 void
-imap_open_store(struct channel *chan, struct mbconfig_store *mb_store)
+imap_open_store(struct channel *chan, struct mbconfig_store const *mb_store)
 {
 	assert(mb_store->type == MBCONFIG_STORE_IMAP);
 	imap_open_mailbox(chan, mb_store, "INBOX");
@@ -194,9 +192,51 @@ imap_notify_change(struct imap_store *store)
 	channel_notify_change(store->chan, store->mb_store, store->mailbox);
 }
 
+static char const *
+eval_cmd_option(
+	struct channel const *chan, char *buf, size_t buf_size, char const *cmd_option,
+	char const *value, char const *cmd
+)
+{
+	if (cmd == NULL)
+		return value;
+
+	if (cmd[0] == '+')
+		cmd++;
+
+	FILE *fp = popen(cmd, "r");
+	if (fp == NULL) {
+		channel_log(chan, LOG_ERR, "%s failed to spawn: %s", cmd_option, strerror(errno));
+		return NULL;
+	}
+
+	char *line = fgets(buf, buf_size, fp);
+
+	int status = pclose(fp);
+
+	int success = WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS;
+	if (!success) {
+		channel_log(chan, LOG_ERR, "%s failed", cmd_option);
+		return NULL;
+	}
+
+	if (line == NULL) {
+		channel_log(chan, LOG_ERR, "%s produced no output", cmd_option);
+		return NULL;
+	}
+
+	char *s = strchr(line, '\n');
+	if (s != NULL)
+		*s = '\0';
+
+	return buf;
+}
+
 static void
 feed(struct imap_store *store, char *line)
 {
+	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
+
 	imap_log(store, LOG_DEBUG, "S: %s", line);
 
 	if (*line == '*' || *line == '+') {
@@ -214,15 +254,30 @@ feed(struct imap_store *store, char *line)
 		case STATE_IMAP_CAPABILITY:
 			if (strncmp(line, "* CAPABILITY ", 13))
 				return; /* Ignore. */
-			line += 12;
+			line += 13;
 
 			store->cap = 0;
-			if (strstr(line, " IDLE"))
-				store->cap |= CAP_IDLE;
-			if (strstr(line, " LOGINDISABLED"))
-				store->cap |= CAP_LOGINDISABLED;
-			if (strstr(line, " STARTTLS"))
-				store->cap |= CAP_STARTTLS;
+
+			for (;;) {
+				char *space = strchr(line, ' ');
+				if (space)
+					*space = '\0';
+
+				if (strcmp(line, "IDLE") == 0)
+					store->cap |= CAP_IDLE;
+				if (strcmp(line, "LOGINDISABLED") == 0)
+					store->cap |= CAP_LOGINDISABLED;
+				if (strcmp(line, "STARTTLS") == 0)
+					store->cap |= CAP_STARTTLS;
+				if (strncmp(line, "AUTH=", 5) == 0 &&
+				    mb_account->auth_mech != NULL &&
+				    strcmp(line + 5, mb_account->auth_mech) == 0)
+					store->cap |= CAP_AUTH;
+
+				if (space == NULL)
+					break;
+				line = space + 1;
+			}
 			return;
 
 		case STATE_IMAP_LIST:
@@ -269,8 +324,6 @@ feed(struct imap_store *store, char *line)
 	switch (store->state) {
 	case STATE_IMAP_CAPABILITY:
 	{
-		struct mbconfig_imap_account *mb_account = store->mb_store->imap_store->account;
-
 		if (!(store->cap & CAP_IDLE)) {
 			imap_log(store, LOG_ERR, "IDLE not supported");
 			store->state = STATE_ERROR;
@@ -288,35 +341,77 @@ feed(struct imap_store *store, char *line)
 			return;
 		}
 
+		imap_log(store, LOG_DEBUG, "Logging in...");
+
+		if (store->cap & CAP_AUTH) {
+			char buf[8192];
+			char const *authdata = eval_cmd_option(
+				store->chan,
+				buf,
+				sizeof buf,
+				"PassCmd",
+				mb_account->pass,
+				mb_account->pass_cmd
+			);
+			if (authdata == NULL) {
+				imap_log(store, LOG_ERR, "No authdata");
+				store->state = STATE_ERROR;
+				return;
+			}
+
+			write_cmdf(
+				store,
+				STATE_IMAP_LOGIN,
+				"AUTHENTICATE %s %s",
+				mb_account->auth_mech,
+				authdata
+			);
+			return;
+		}
+
 		if (store->cap & CAP_LOGINDISABLED) {
 			imap_log(store, LOG_ERR, "LOGIN disabled by the server");
 			store->state = STATE_ERROR;
 			return;
 		}
 
-		imap_log(store, LOG_DEBUG, "Logging in...");
 		if (!mb_account->login_auth) {
 			imap_log(store, LOG_ERR, "LOGIN disabled by the user");
 			store->state = STATE_ERROR;
 			return;
 		}
 
-		mbconfig_eval_cmd_option(&mb_account->user, mb_account->user_cmd);
-		mbconfig_eval_cmd_option(&mb_account->pass, mb_account->pass_cmd);
-
-		if (!mb_account->user || !mb_account->pass) {
-			imap_log(store, LOG_ERR, "Missing User and/or Pass");
+		char user_buf[1024];
+		char const *user = eval_cmd_option(
+			store->chan,
+			user_buf,
+			sizeof user_buf,
+			"UserCmd",
+			mb_account->user,
+			mb_account->user_cmd
+		);
+		if (user == NULL) {
+			imap_log(store, LOG_ERR, "No username");
 			store->state = STATE_ERROR;
 			return;
 		}
 
-		write_cmdf(
-			store,
-			STATE_IMAP_LOGIN,
-			"LOGIN \"%q\" \"%q\"",
-			mb_account->user,
-			mb_account->pass
+		char pass_buf[1024];
+		char const *pass = eval_cmd_option(
+			store->chan,
+			pass_buf,
+			sizeof pass_buf,
+			"PassCmd",
+			mb_account->pass,
+			mb_account->pass_cmd
 		);
+		if (pass == NULL) {
+			imap_log(store, LOG_ERR, "No password");
+			store->state = STATE_ERROR;
+			return;
+		}
+
+		write_cmdf(store, STATE_IMAP_LOGIN, "LOGIN \"%q\" \"%q\"", user, pass);
 		break;
 	}
 
@@ -325,7 +420,7 @@ feed(struct imap_store *store, char *line)
 		return;
 
 	case STATE_IMAP_LOGIN:
-		imap_log(store, LOG_NOTICE, "Logged in");
+		imap_log(store, LOG_DEBUG, "Logged in");
 
 		if (store->list_mailboxes) {
 			write_cmdf(store, STATE_IMAP_LIST, "LIST \"%q\" \"%q\"", NAMESPACE, "*");
@@ -344,6 +439,8 @@ feed(struct imap_store *store, char *line)
 		break;
 
 	case STATE_IMAP_EXAMINE:
+		imap_log(store, LOG_INFO, "Watching");
+
 		write_cmdf(store, STATE_IMAP_IDLE, "IDLE");
 
 		/* Bring other side up-to-date. */
@@ -437,22 +534,12 @@ fail:
 }
 
 static BIO *
-create_connect_bio(struct imap_store const *store)
+create_connect_bio(char const *host, char const *port)
 {
-	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
-
 	BIO *bio = NULL;
 
-	char const *port = mb_account->port;
-	if (port == NULL) {
-		if (mb_account->ssl == MBCONFIG_SSL_IMAPS)
-			port = "993";
-		else
-			port = "143";
-	}
-
 	if ((bio = BIO_new(BIO_s_connect())) == NULL || BIO_set_nbio(bio, 1) != 1 ||
-	    BIO_set_conn_hostname(bio, mb_account->host) != 1 || BIO_set_conn_port(bio, port) != 1)
+	    BIO_set_conn_hostname(bio, host) != 1 || BIO_set_conn_port(bio, port) != 1)
 		goto fail;
 
 	return bio;
@@ -467,10 +554,15 @@ create_sink_bio(struct imap_store *store)
 {
 	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
 
-	if (mb_account->tunnel_cmd != NULL)
+	if (mb_account->tunnel_cmd != NULL) {
 		return create_tunnel_bio(store, mb_account->tunnel_cmd);
-	else
-		return create_connect_bio(store);
+	} else {
+		char const *port = mb_account->port;
+		if (port == NULL)
+			port = mb_account->ssl == MBCONFIG_SSL_IMAPS ? "993" : "143";
+
+		return create_connect_bio(mb_account->host, port);
+	}
 }
 
 static void
@@ -481,7 +573,7 @@ do_poll(struct imap_store *store)
 	struct ev_loop *loop = chan->loop;
 #endif
 
-	for (int rc;;)
+	for (int rc;;) {
 		switch (store->state) {
 		case STATE_GROUND:
 			imap_log(store, LOG_DEBUG, "Connecting...");
@@ -617,7 +709,7 @@ do_poll(struct imap_store *store)
 			break;
 
 		case STATE_DISCONNECTED:
-			imap_log(store, LOG_ERR, "Disconnected");
+			imap_log(store, LOG_WARNING, "Disconnected");
 			ev_timer_stop(EV_A_ & store->timeout_watcher);
 			ev_timer_set(&store->timeout_watcher, 3, 0);
 			ev_timer_start(EV_A_ & store->timeout_watcher);
@@ -656,4 +748,5 @@ do_poll(struct imap_store *store)
 			break;
 		}
 		}
+	}
 }

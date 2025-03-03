@@ -5,12 +5,13 @@ PRETTIERFLAGS?=--no-config --use-tabs --single-quote
 PRETTIERSRC=*.mjs
 
 MBIDLED_PATH?=../build
+PEMS=key.pem csr.pem cert.pem
 
-run :
-	PATH=$(MBIDLED_PATH):$(PATH) $(NODE) ./run-tests.mjs
+run : | $(PEMS)
+	PATH=$(MBIDLED_PATH):$(PATH) $(NODE) ./index.mjs $(TEST_FLAGS)
 
-pre-run :
-	openssl genrsa -out key.pem 1024
+$(PEMS) :
+	openssl genrsa -out key.pem 2048
 	openssl req -batch -new -key key.pem -out csr.pem
 	openssl x509 -req -in csr.pem -signkey key.pem -out cert.pem
 

@@ -11,7 +11,7 @@
 
 struct maildir_store {
 	struct channel *chan;
-	struct mbconfig_store *mb_store;
+	struct mbconfig_store const *mb_store;
 	char *mailbox;
 
 	char cur_path[PATH_MAX];
@@ -47,12 +47,12 @@ new_stat_cb(EV_P_ ev_stat *w, int revents)
 
 static void
 maildir_open_mailbox(
-	struct channel *chan, struct mbconfig_store *mb_store, char const *mailbox_path,
+	struct channel *chan, struct mbconfig_store const *mb_store, char const *mailbox_path,
 	char const *mailbox
 )
 {
 	char tmp[PATH_MAX];
-	ASSERT_SNPRINTF(tmp, "%s/cur", mailbox_path);
+	snprintf_safe(tmp, "%s/cur", mailbox_path);
 	if (access(tmp, X_OK)) {
 		channel_log(chan, LOG_DEBUG, "%s: Not a maildir", mailbox_path);
 		return;
@@ -63,14 +63,13 @@ maildir_open_mailbox(
 		return;
 	}
 
-	struct maildir_store *store;
-	ASSERT(store = malloc(sizeof *store));
+	struct maildir_store *store = oom(malloc(sizeof *store));
 
 	store->chan = chan;
 	store->mb_store = mb_store;
-	ASSERT(store->mailbox = strdup(mailbox));
+	store->mailbox = oom(strdup(mailbox));
 
-	maildir_log(store, LOG_INFO, "Watching path %s", mailbox_path);
+	maildir_log(store, LOG_INFO, "Watching");
 
 	int poll_interval = chan->mb_chan->mbidled.start_interval;
 
@@ -78,7 +77,7 @@ maildir_open_mailbox(
 	ev_stat_init(&store->cur_watcher, cur_stat_cb, store->cur_path, poll_interval);
 	ev_stat_start(chan->loop, &store->cur_watcher);
 
-	ASSERT_SNPRINTF(store->new_path, "%s/new", mailbox_path);
+	snprintf_safe(store->new_path, "%s/new", mailbox_path);
 	ev_stat_init(&store->new_watcher, new_stat_cb, store->new_path, poll_interval);
 	ev_stat_start(chan->loop, &store->new_watcher);
 
@@ -87,7 +86,7 @@ maildir_open_mailbox(
 }
 
 void
-maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store)
+maildir_open_store(struct channel *chan, struct mbconfig_store const *mb_store)
 {
 	assert(mb_store->type == MBCONFIG_STORE_MAILDIR);
 	struct mbconfig_maildir_store *mb_maildir_store = mb_store->maildir_store;
@@ -97,7 +96,7 @@ maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store)
 
 	/* Path is a prefix in fact. Go to parent and scan all files. */
 	char maildir_path[PATH_MAX];
-	ASSERT_SNPRINTF(maildir_path, "%s", mb_maildir_store->path);
+	snprintf_safe(maildir_path, "%s", mb_maildir_store->path);
 	char *slash = strrchr(maildir_path, '/');
 	if (slash)
 		*slash = '\0';
@@ -108,12 +107,12 @@ maildir_open_store(struct channel *chan, struct mbconfig_store *mb_store)
 
 	for (struct dirent *dent; (dent = readdir(dir));) {
 		char mailbox_path[PATH_MAX];
-		ASSERT_SNPRINTF(mailbox_path, "%s/%s", maildir_path, dent->d_name);
+		snprintf_safe(mailbox_path, "%s/%s", maildir_path, dent->d_name);
 		/* Inbox requires special handling. */
 		if (mb_maildir_store->inbox && !strcmp(mb_maildir_store->inbox, mailbox_path))
 			continue;
 		maildir_open_mailbox(chan, mb_store, mailbox_path, dent->d_name);
 	}
 
-	ASSERT(!closedir(dir));
+	closedir(dir);
 }

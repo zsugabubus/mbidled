@@ -4,11 +4,9 @@
 #include <stddef.h>
 
 extern char const *opt_cmd;
-extern int opt_reaction_time;
-extern int opt_rerun_delay;
 extern int opt_verbose;
 
-void print_log(int priority, char const *message);
+void mb_log(int level, char const *format, ...);
 
 #define container_of(ptr, base, member) \
 	(base *)(/* typeof(ptr) == typeof(base->member) */ \
@@ -16,12 +14,18 @@ void print_log(int priority, char const *message);
 		 offsetof(base, member) \
 	)
 
-#define ASSERT(c) \
+static inline void *
+oom(void *p)
+{
+	if (p == NULL)
+		abort();
+	return p;
+}
+
+#define snprintf_safe(buf, ...) \
 	do { \
-		if (!(c)) \
+		if (snprintf(buf, sizeof buf, __VA_ARGS__) >= (int)sizeof buf) \
 			abort(); \
 	} while (0)
-
-#define ASSERT_SNPRINTF(buf, ...) ASSERT(snprintf(buf, sizeof buf, __VA_ARGS__) < (int)sizeof buf)
 
 #endif

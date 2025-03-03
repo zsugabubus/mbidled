@@ -565,6 +565,46 @@ create_sink_bio(struct imap_store *store)
 	}
 }
 
+static int
+verify_cert(struct imap_store const *store)
+{
+	SSL *ssl;
+	BIO_get_ssl(store->bio, &ssl);
+
+	X509 *untrusted_cert = SSL_get_peer_certificate(ssl);
+	if (untrusted_cert == NULL) {
+		imap_log(store, LOG_ERR, "No certificate");
+		return 0;
+	}
+
+	int result = SSL_get_verify_result(ssl);
+	if (result == X509_V_OK)
+		return 1;
+
+	SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+	X509_STORE *cert_store = SSL_CTX_get_cert_store(ctx);
+	STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(cert_store);
+
+	for (int i = 0; i < sk_X509_OBJECT_num(objs); ++i) {
+		X509_OBJECT *obj = sk_X509_OBJECT_value(objs, i);
+		X509 *trusted_cert = X509_OBJECT_get0_X509(obj);
+		if (X509_cmp(untrusted_cert, trusted_cert) == 0)
+			return 1;
+	}
+
+	imap_log(
+		store,
+		LOG_ERR,
+		"Certificate verification failed: %s",
+		X509_verify_cert_error_string(result)
+	);
+
+	if (opt_verbose)
+		X509_print_fp(stderr, untrusted_cert);
+
+	return 0;
+}
+
 static void
 do_poll(struct imap_store *store)
 {
@@ -660,40 +700,10 @@ do_poll(struct imap_store *store)
 			break;
 
 		case STATE_SSL_ESTABLISHED:
-		{
-			SSL *ssl;
-			X509 *untrusted_cert;
-			int err;
-			BIO_get_ssl(store->bio, &ssl);
-			if ((untrusted_cert = SSL_get_peer_certificate(ssl)) == NULL) {
-				imap_log(store, LOG_ERR, "No certificate");
+			if (!verify_cert(store)) {
 				store->state = STATE_ERROR;
 				break;
-			} else if ((err = SSL_get_verify_result(ssl)) != X509_V_OK) {
-				SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
-				X509_STORE *cert_store = SSL_CTX_get_cert_store(ctx);
-				STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(cert_store);
-				for (int i = 0; i < sk_X509_OBJECT_num(objs); ++i) {
-					X509_OBJECT *obj = sk_X509_OBJECT_value(objs, i);
-					X509 *trusted_cert = X509_OBJECT_get0_X509(obj);
-					if (!X509_cmp(untrusted_cert, trusted_cert))
-						goto cert_trusted;
-				}
-
-				imap_log(
-					store,
-					LOG_ERR,
-					"Certificate verification failed: %s",
-					X509_verify_cert_error_string(err)
-				);
-				if (opt_verbose)
-					X509_print_fp(stdout, untrusted_cert);
-				store->state = STATE_ERROR;
-				break;
-
-			cert_trusted:;
 			}
-		}
 
 			imap_log(store, LOG_DEBUG, "SSL connection established");
 

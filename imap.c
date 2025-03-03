@@ -141,25 +141,21 @@ write_cmdf(struct imap_store *store, enum state next_state, char const *fmt, ...
 	va_list ap;
 	va_start(ap, fmt);
 	for (char const *from = fmt;;) {
-		char const *to = strchr(from, '%');
-		if (!to)
-			to = from + strlen(from);
-		int n = (int)(to - from);
-
+		size_t n = strcspn(from, "%");
 		BIO_write(store->bio, from, n);
+		from += n;
 
-		if (!*to)
+		if (!*from)
 			break;
+		from++;
 
-		char const *arg = va_arg(ap, char *);
-
-		switch (to[1]) {
+		switch (*from++) {
 		case 's':
-			BIO_puts(store->bio, arg);
+			BIO_puts(store->bio, va_arg(ap, char *));
 			break;
 
 		case 'q':
-			for (char const *s = arg;;) {
+			for (char const *s = va_arg(ap, char *);;) {
 				size_t n = strcspn(s, "\"\\");
 				BIO_write(store->bio, s, n);
 				s += n;
@@ -174,8 +170,6 @@ write_cmdf(struct imap_store *store, enum state next_state, char const *fmt, ...
 		default:
 			abort();
 		}
-
-		from = to + 2;
 	}
 	va_end(ap);
 

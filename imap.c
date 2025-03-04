@@ -13,6 +13,7 @@
 #include "mbidled.h"
 
 static char const NAMESPACE[] = "INBOX.";
+static int IDLE_TIMEOUT = 2 * 60;
 
 struct imap_store {
 	struct channel *chan;
@@ -92,6 +93,13 @@ timeout_cb(EV_P_ ev_timer *w, int revents)
 {
 	(void)revents;
 	struct imap_store *store = container_of(w, struct imap_store, timeout_watcher);
+
+	if (store->state == STATE_IMAP_IDLE) {
+		imap_log(store, LOG_DEBUG, "Refresh IDLE");
+		BIO_puts(store->bio, "DONE\r\n");
+		BIO_flush(store->bio);
+		return;
+	}
 
 	store->state = STATE_GROUND;
 	do_poll(store);
@@ -305,6 +313,9 @@ static void
 process_ok(struct imap_store *store)
 {
 	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
+#ifdef EV_MULTIPLICITY
+	struct ev_loop *loop = store->chan->loop;
+#endif
 
 	switch (store->state) {
 	case STATE_IMAP_CAPABILITY:
@@ -428,8 +439,16 @@ process_ok(struct imap_store *store)
 
 		write_cmdf(store, STATE_IMAP_IDLE, "IDLE");
 
+		ev_timer_stop(EV_A_ & store->timeout_watcher);
+		ev_timer_set(&store->timeout_watcher, IDLE_TIMEOUT, IDLE_TIMEOUT);
+		ev_timer_start(EV_A_ & store->timeout_watcher);
+
 		/* Bring other side up-to-date. */
 		imap_notify_change(store);
+		return;
+
+	case STATE_IMAP_IDLE:
+		write_cmdf(store, STATE_IMAP_IDLE, "IDLE");
 		return;
 
 	default:

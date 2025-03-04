@@ -226,94 +226,85 @@ eval_cmd_option(
 	return buf;
 }
 
+static int
+parse_cap(char const *s, char const *auth_mech)
+{
+	if (strcmp(s, "IDLE") == 0)
+		return CAP_IDLE;
+
+	if (strcmp(s, "LOGINDISABLED") == 0)
+		return CAP_LOGINDISABLED;
+
+	if (strcmp(s, "STARTTLS") == 0)
+		return CAP_STARTTLS;
+
+	if (auth_mech != NULL && strncmp(s, "AUTH=", 5) == 0 && strcmp(s + 5, auth_mech) == 0)
+		return CAP_AUTH;
+
+	return 0;
+}
+
+static int
+parse_caps(char *s, char const *auth_mech)
+{
+	int caps = 0;
+	for (;;) {
+		char *space = strchr(s, ' ');
+		if (space)
+			*space = '\0';
+		caps |= parse_cap(s, auth_mech);
+		if (space == NULL)
+			return caps;
+		s = space + 1;
+	}
+}
+
 static void
-feed(struct imap_store *store, char *line)
+process_untagged(struct imap_store *store, char *s)
 {
 	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
 
-	imap_log(store, LOG_DEBUG, "S: %s", line);
-
-	if (*line == '*' || *line == '+') {
-		switch (store->state) {
-		case STATE_IMAP_GROUND:
-			if (strncmp(line, "* OK ", 5)) {
-				imap_log(store, LOG_ERR, "OK expected");
-				store->state = STATE_ERROR;
-				return;
-			}
-
-			write_cmdf(store, STATE_IMAP_CAPABILITY, "CAPABILITY");
-			return;
-
-		case STATE_IMAP_CAPABILITY:
-			if (strncmp(line, "* CAPABILITY ", 13))
-				return; /* Ignore. */
-			line += 13;
-
-			store->cap = 0;
-
-			for (;;) {
-				char *space = strchr(line, ' ');
-				if (space)
-					*space = '\0';
-
-				if (strcmp(line, "IDLE") == 0)
-					store->cap |= CAP_IDLE;
-				if (strcmp(line, "LOGINDISABLED") == 0)
-					store->cap |= CAP_LOGINDISABLED;
-				if (strcmp(line, "STARTTLS") == 0)
-					store->cap |= CAP_STARTTLS;
-				if (strncmp(line, "AUTH=", 5) == 0 &&
-				    mb_account->auth_mech != NULL &&
-				    strcmp(line + 5, mb_account->auth_mech) == 0)
-					store->cap |= CAP_AUTH;
-
-				if (space == NULL)
-					break;
-				line = space + 1;
-			}
-			return;
-
-		case STATE_IMAP_LIST:
-			if (strncmp(line, "* LIST ", 7))
-				return; /* Ignore. */
-			line += 7;
-
-			{
-				/* Simple and stupid. */
-				char const *mailbox = strstr(line, NAMESPACE);
-				if (mailbox) {
-					mailbox += sizeof NAMESPACE - 1;
-					imap_open_mailbox(store->chan, store->mb_store, mailbox);
-				}
-			}
-
-			return;
-
-		case STATE_IMAP_IDLE:
-			if (!('0' <= line[2] && line[2] <= '9'))
-				return; /* Ignore. */
-
-			imap_notify_change(store);
-			return;
-
-		default:
-			/* Ignore. */
+	switch (store->state) {
+	case STATE_IMAP_GROUND:
+		if (strncmp(s, "OK ", 3)) {
+			imap_log(store, LOG_ERR, "OK expected");
+			store->state = STATE_ERROR;
 			return;
 		}
-	}
 
-	int line_tag = strtol(line, &line, 10);
-	if (line_tag != store->expected_tag) {
-		imap_log(store, LOG_ERR, "Received response with unknown tag %d", line_tag);
+		write_cmdf(store, STATE_IMAP_CAPABILITY, "CAPABILITY");
+		return;
+
+	case STATE_IMAP_CAPABILITY:
+		if (strncmp(s, "CAPABILITY ", 11) == 0)
+			store->cap = parse_caps(s + 11, mb_account->auth_mech);
+		return;
+
+	case STATE_IMAP_LIST:
+		if (strncmp(s, "LIST ", 5) == 0) {
+			char const *mailbox = strstr(s + 5, NAMESPACE);
+			if (mailbox != NULL) {
+				mailbox += strlen(NAMESPACE);
+				imap_open_mailbox(store->chan, store->mb_store, mailbox);
+			}
+		}
+		return;
+
+	case STATE_IMAP_IDLE:
+		if ('0' <= *s && *s <= '9')
+			imap_notify_change(store);
+		return;
+
+	default:
+		/* Ignore. */
 		return;
 	}
+}
 
-	if (memcmp(line, " OK ", 4)) {
-		imap_log(store, LOG_ERR, "OK expected");
-		store->state = STATE_ERROR;
-		return;
-	}
+static void
+process_ok(struct imap_store *store)
+{
+	struct mbconfig_imap_account const *mb_account = store->mb_store->imap_store->account;
 
 	switch (store->state) {
 	case STATE_IMAP_CAPABILITY:
@@ -406,7 +397,7 @@ feed(struct imap_store *store, char *line)
 		}
 
 		write_cmdf(store, STATE_IMAP_LOGIN, "LOGIN \"%q\" \"%q\"", user, pass);
-		break;
+		return;
 	}
 
 	case STATE_IMAP_STARTTLS:
@@ -418,7 +409,7 @@ feed(struct imap_store *store, char *line)
 
 		if (store->list_mailboxes) {
 			write_cmdf(store, STATE_IMAP_LIST, "LIST \"%q\" \"%q\"", NAMESPACE, "*");
-			break;
+			return;
 		}
 		/* FALLTHROUGH */
 	case STATE_IMAP_LIST:
@@ -430,7 +421,7 @@ feed(struct imap_store *store, char *line)
 			!strcmp(store->mailbox, "INBOX") ? "" : NAMESPACE,
 			store->mailbox
 		);
-		break;
+		return;
 
 	case STATE_IMAP_EXAMINE:
 		imap_log(store, LOG_INFO, "Watching");
@@ -439,12 +430,37 @@ feed(struct imap_store *store, char *line)
 
 		/* Bring other side up-to-date. */
 		imap_notify_change(store);
-		break;
+		return;
 
 	default:
 		/* Ignore unneeded completion responses. */
-		break;
+		return;
 	}
+}
+
+static void
+process_line(struct imap_store *store, char *line)
+{
+	imap_log(store, LOG_DEBUG, "S: %s", line);
+
+	if ((line[0] == '*' || line[0] == '+') && line[1] == ' ') {
+		process_untagged(store, line + 2);
+		return;
+	}
+
+	int tag = strtol(line, &line, 10);
+	if (tag != store->expected_tag) {
+		imap_log(store, LOG_ERR, "Received response with unknown tag %d", tag);
+		return;
+	}
+
+	if (memcmp(line, " OK ", 4) != 0) {
+		imap_log(store, LOG_ERR, "OK expected");
+		store->state = STATE_ERROR;
+		return;
+	}
+
+	process_ok(store);
 }
 
 static BIO *
@@ -743,7 +759,7 @@ do_poll(struct imap_store *store)
 			int n = BIO_gets(store->bio, line, sizeof line);
 			if (n >= 2) {
 				line[n - 2] = '\0';
-				feed(store, line);
+				process_line(store, line);
 			} else if (BIO_should_retry(store->bio)) {
 				BIO_flush(store->bio);
 				update_io_interest(EV_A_ store);

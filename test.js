@@ -626,7 +626,8 @@ test("PassCmd generates multiple lines for AUTHENTICATE data", async () => {
 		},
 		config: {
 			authMech: OAUTHBEARER,
-			passCmd: '"echo 1st line; echo 2nd line; echo 3rd line"',
+			// Use a single write to avoid failure due to broken pipe.
+			passCmd: '"printf %s\\\\\\\\n 1st\\\\ line 2nd\\\\ line 3rd\\\\ line"',
 		},
 	});
 	expect.clientsToBeAuthenticatedWith(`${OAUTHBEARER} 1st line`);

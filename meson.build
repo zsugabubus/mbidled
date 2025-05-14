@@ -45,11 +45,13 @@ install_man('mbidled.1')
 test(
 	'e2e',
 	find_program('make'),
-	workdir: meson.project_source_root() / 'test',
+	workdir: meson.project_source_root(),
 	env: [
 		'MBIDLED_PATH=' + meson.project_build_root()
 	],
 	depends: mbidled_exe,
+	args: ['check'],
+	timeout: 60,
 )
 
 test(

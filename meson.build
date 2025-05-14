@@ -45,9 +45,9 @@ install_man('mbidled.1')
 test(
 	'e2e',
 	find_program('make'),
-	workdir: meson.source_root() / 'test',
+	workdir: meson.project_source_root() / 'test',
 	env: [
-		'MBIDLED_PATH=' + meson.build_root()
+		'MBIDLED_PATH=' + meson.project_build_root()
 	],
 	depends: mbidled_exe,
 )
@@ -55,6 +55,6 @@ test(
 test(
 	'lint',
 	find_program('make'),
-	workdir: meson.source_root(),
+	workdir: meson.project_source_root(),
 	args: ['lint'],
 )

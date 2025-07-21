@@ -275,7 +275,7 @@ process_untagged(struct imap_store *store, char *s)
 	switch (store->state) {
 	case STATE_IMAP_GROUND:
 		if (strncmp(s, "OK ", 3)) {
-			imap_log(store, LOG_ERR, "OK expected");
+			imap_log(store, LOG_WARNING, "OK expected");
 			store->state = STATE_ERROR;
 			return;
 		}
@@ -435,7 +435,7 @@ process_ok(struct imap_store *store)
 		return;
 
 	case STATE_IMAP_EXAMINE:
-		imap_log(store, LOG_INFO, "Watching");
+		imap_log(store, LOG_DEBUG, "Watching");
 
 		write_cmdf(store, STATE_IMAP_IDLE, "IDLE");
 
@@ -469,12 +469,12 @@ process_line(struct imap_store *store, char *line)
 
 	int tag = strtol(line, &line, 10);
 	if (tag != store->expected_tag) {
-		imap_log(store, LOG_ERR, "Received response with unknown tag %d", tag);
+		imap_log(store, LOG_DEBUG, "Received response with unknown tag %d", tag);
 		return;
 	}
 
 	if (memcmp(line, " OK ", 4) != 0) {
-		imap_log(store, LOG_ERR, "OK expected");
+		imap_log(store, LOG_WARNING, "OK expected");
 		store->state = STATE_ERROR;
 		return;
 	}
@@ -750,7 +750,7 @@ do_poll(struct imap_store *store)
 			break;
 
 		case STATE_DISCONNECTED:
-			imap_log(store, LOG_WARNING, "Disconnected");
+			imap_log(store, LOG_DEBUG, "Disconnected");
 			ev_timer_stop(EV_A_ & store->timeout_watcher);
 			ev_timer_set(&store->timeout_watcher, 3, 0);
 			ev_timer_start(EV_A_ & store->timeout_watcher);

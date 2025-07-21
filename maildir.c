@@ -69,7 +69,7 @@ maildir_open_mailbox(
 	store->mb_store = mb_store;
 	store->mailbox = oom(strdup(mailbox));
 
-	maildir_log(store, LOG_INFO, "Watching");
+	maildir_log(store, LOG_DEBUG, "Watching");
 
 	int poll_interval = chan->mb_chan->mbidled.start_interval;
 
